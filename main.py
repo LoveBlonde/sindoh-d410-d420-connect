@@ -95,7 +95,7 @@ class D410ConnectApp(ctk.CTk):
         self.printer_name_var = tk.StringVar(value="SINDOH D410/D420 Series")
         self.set_default_printer_var = tk.BooleanVar(value=True)
         self.scan_name_var = tk.StringVar(value=default_user)
-        self.scan_protocol_var = tk.StringVar(value="SMB")
+        self.scan_protocol_var = tk.StringVar(value="내장 FTP 수신 (권장)")
         self.pc_username_var = tk.StringVar(value=default_user)
         self.pc_password_var = tk.StringVar(value="")
         self.mfp_admin_pw_var = tk.StringVar(value="")
@@ -933,16 +933,25 @@ class D410ConnectApp(ctk.CTk):
             ).pack(side="left", padx=(0, 6))
             ctk.CTkSegmentedButton(
                 s_row1,
-                values=["SMB", "FTP"],
+                values=["내장 FTP 수신 (권장)", "SMB 공유폴더"],
                 variable=self.scan_protocol_var,
                 font=ctk.CTkFont(family=self.font_family, size=12, weight="bold"),
                 selected_color=COLOR_PRIMARY,
+                command=self._on_scan_protocol_changed,
             ).pack(side="left")
 
-            s_row2 = ctk.CTkFrame(s_card, fg_color="transparent")
-            s_row2.pack(fill="x", padx=18, pady=4)
+            self.ftp_notice_lbl = ctk.CTkLabel(
+                s_card,
+                text="✓ 신도 원터치 방식과 동일하게 내장 FTP 스캔 수신 서버(포트 2121)가 백그라운드에서 자동 작동하므로,\n   별도의 Windows/Mac 공유폴더 설정이나 PC 로그인 비밀번호 입력 없이 Downloads/sindohScan 으로 스캔됩니다.",
+                font=ctk.CTkFont(family=self.font_family, size=12),
+                text_color=COLOR_PRIMARY,
+                justify="left",
+                anchor="w",
+            )
+
+            self.smb_auth_row = ctk.CTkFrame(s_card, fg_color="transparent")
             ctk.CTkLabel(
-                s_row2,
+                self.smb_auth_row,
                 text="PC 계정 / 비밀번호:",
                 width=140,
                 font=ctk.CTkFont(family=self.font_family, size=13),
@@ -950,7 +959,7 @@ class D410ConnectApp(ctk.CTk):
                 anchor="w",
             ).pack(side="left")
             ctk.CTkEntry(
-                s_row2,
+                self.smb_auth_row,
                 textvariable=self.pc_username_var,
                 placeholder_text="PC 사용자 ID",
                 font=ctk.CTkFont(family=self.font_family, size=12),
@@ -958,7 +967,7 @@ class D410ConnectApp(ctk.CTk):
                 height=32,
             ).pack(side="left", padx=(4, 8))
             ctk.CTkEntry(
-                s_row2,
+                self.smb_auth_row,
                 textvariable=self.pc_password_var,
                 placeholder_text="PC 로그인 암호 (SMB 스캔 시 필요)",
                 show="•",
@@ -967,10 +976,9 @@ class D410ConnectApp(ctk.CTk):
                 height=32,
             ).pack(side="left")
 
-            s_row3 = ctk.CTkFrame(s_card, fg_color="transparent")
-            s_row3.pack(fill="x", padx=18, pady=(4, 14))
+            self.s_row3 = ctk.CTkFrame(s_card, fg_color="transparent")
             ctk.CTkLabel(
-                s_row3,
+                self.s_row3,
                 text="복합기 관리자 암호:",
                 width=140,
                 font=ctk.CTkFont(family=self.font_family, size=13),
@@ -978,7 +986,7 @@ class D410ConnectApp(ctk.CTk):
                 anchor="w",
             ).pack(side="left")
             ctk.CTkEntry(
-                s_row3,
+                self.s_row3,
                 textvariable=self.mfp_admin_pw_var,
                 placeholder_text="기본값(Public 등록) 사용 시 비워두세요 (예: 12345678 / sindoh#123)",
                 show="•",
@@ -986,6 +994,8 @@ class D410ConnectApp(ctk.CTk):
                 width=378,
                 height=32,
             ).pack(side="left", padx=(4, 0))
+
+            self._on_scan_protocol_changed(self.scan_protocol_var.get())
 
         # Test Mode Checkbox
         sim_row = ctk.CTkFrame(scroll, fg_color="transparent")
@@ -998,6 +1008,18 @@ class D410ConnectApp(ctk.CTk):
             text_color=COLOR_TEXT_SUB,
             fg_color=COLOR_PRIMARY,
         ).pack(side="left")
+
+    def _on_scan_protocol_changed(self, value: str) -> None:
+        if not hasattr(self, "ftp_notice_lbl") or not hasattr(self, "smb_auth_row"):
+            return
+        self.ftp_notice_lbl.pack_forget()
+        self.smb_auth_row.pack_forget()
+        self.s_row3.pack_forget()
+        if "FTP" in value.upper():
+            self.ftp_notice_lbl.pack(fill="x", padx=18, pady=(6, 4))
+        else:
+            self.smb_auth_row.pack(fill="x", padx=18, pady=4)
+        self.s_row3.pack(fill="x", padx=18, pady=(4, 14))
 
     def _browse_driver_path(self) -> None:
         folder = filedialog.askdirectory(
