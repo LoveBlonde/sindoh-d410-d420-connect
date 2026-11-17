@@ -1,0 +1,45 @@
+name: Build Windows & macOS Executables
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Build Windows .exe
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --name "D410-D420-Connect" --collect-all customtkinter main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: D410-D420-Connect-Windows
+          path: dist/D410-D420-Connect
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Build macOS .app
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --name "D410-D420-Connect" --collect-all customtkinter main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: D410-D420-Connect-macOS
+          path: dist/D410-D420-Connect.app

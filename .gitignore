@@ -1,0 +1,25 @@
+# Binary builds & Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.spec
+.venv/
+venv/
+
+# Proprietary vendor driver binaries (users can drop their own or let the app fetch/use OS drivers)
+drivers/windows/*.zip
+drivers/windows/*.exe
+drivers/windows/*.dll
+drivers/windows/*.cab
+drivers/windows/*.cat
+drivers/macos/*.pkg
+drivers/macos/*.dmg
+drivers/macos/*.zip
+!drivers/windows/.gitkeep
+!drivers/macos/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
