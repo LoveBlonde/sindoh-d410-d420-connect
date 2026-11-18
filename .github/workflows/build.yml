@@ -19,7 +19,7 @@ jobs:
           pip install -r requirements.txt pyinstaller
       - name: Build Windows .exe
         run: |
-          pyinstaller --noconfirm --onedir --windowed --name "D410-D420-Connect" --collect-all customtkinter main.py
+          pyinstaller --noconfirm --onedir --windowed --uac-admin --name "D410-D420-Connect" --collect-all customtkinter main.py
       - uses: actions/upload-artifact@v4
         with:
           name: D410-D420-Connect-Windows

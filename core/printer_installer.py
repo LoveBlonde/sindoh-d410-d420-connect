@@ -184,6 +184,39 @@ def ensure_driver_package(
     return None
 
 
+def _is_windows_admin() -> bool:
+    if platform.system().lower() != "windows":
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _find_installed_windows_driver() -> Optional[str]:
+    """Check if a Sindoh / Konica Minolta PCL driver is already installed in Windows."""
+    if platform.system().lower() != "windows":
+        return None
+    try:
+        ps_check = (
+            "Get-PrinterDriver -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.Name -match 'SINDOH|KONICA MINOLTA' } | "
+            "Select-Object -First 1 -ExpandProperty Name"
+        )
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_check],
+            capture_output=True,
+            text=True,
+            timeout=6,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        name = (proc.stdout or "").strip()
+        return name if name else None
+    except Exception:
+        return None
+
+
 def install_printer_windows(
     ip: str,
     printer_name: str,
@@ -203,10 +236,15 @@ def install_printer_windows(
     port_name = f"IP_{ip}"
     log(f"[Windows] 프린터 설치 준비: {printer_name} ({port_name})")
 
-    src = ensure_driver_package(custom_driver_path, log_cb=log_cb)
+    existing_win_drv = _find_installed_windows_driver() if not custom_driver_path else None
+    if existing_win_drv:
+        log(f"이미 설치된 신도리코/KM 드라이버 확인됨: {existing_win_drv}")
+        src = None
+    else:
+        src = ensure_driver_package(custom_driver_path, log_cb=log_cb)
     extracted_dir: Optional[Path] = None
     inf_files: List[Path] = []
-    candidate_driver_names: List[str] = []
+    candidate_driver_names: List[str] = [existing_win_drv] if existing_win_drv else []
 
     try:
         if src:
