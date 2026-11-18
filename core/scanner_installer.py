@@ -29,6 +29,7 @@ from core.ftp_scan_server import (
     DEFAULT_FTP_USER,
     ensure_background_ftp_agent,
     get_default_scan_dir,
+    save_scan_profile,
 )
 
 
@@ -356,8 +357,10 @@ def configure_scanner_cross_platform(
         )
 
     if is_builtin_ftp:
-        # 1. Start built-in background FTP receiver daemon (works on both Windows & macOS without sharing folders!)
+        # 1. Save profile & start built-in background FTP receiver daemon (auto-updates MFP if PC DHCP IP changes!)
+        save_scan_profile(mfp_ip=mfp_ip, scan_name=scan_name, port=ftp_port, admin_password=mfp_admin_password)
         _, active_port = ensure_background_ftp_agent(scan_dir=scan_dir, port=ftp_port, log_cb=log_cb)
+        save_scan_profile(mfp_ip=mfp_ip, scan_name=scan_name, port=active_port, admin_password=mfp_admin_password)
         target_proto = "FTP"
         target_folder = "."
         target_user = DEFAULT_FTP_USER

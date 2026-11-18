@@ -15,14 +15,21 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import http.cookiejar
+import json
 import os
 import platform
 import random
+import re
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import threading
+import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -434,6 +441,190 @@ Get-Process -Name 'D410-D420-Connect' -ErrorAction SilentlyContinue |
         pass
 
 
+def _get_appdata_dir() -> Path:
+    sys_name = platform.system().lower()
+    if sys_name == "windows":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "SindohD410Connect"
+    elif sys_name == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "SindohD410Connect"
+    else:
+        base = Path.home() / ".local" / "share" / "SindohD410Connect"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def save_scan_profile(
+    mfp_ip: str,
+    scan_name: str,
+    port: int = DEFAULT_FTP_PORT,
+    admin_password: str = "",
+) -> None:
+    """Persist scan registration profile so the background daemon can auto-update the MFP if this PC's DHCP IP changes."""
+    try:
+        profile_path = _get_appdata_dir() / "scan_profile.json"
+        data = {
+            "mfp_ip": mfp_ip.strip(),
+            "scan_name": scan_name.strip(),
+            "port": int(port),
+            "admin_password": admin_password,
+        }
+        profile_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _get_local_ip_towards(target_ip: str) -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.5)
+            s.connect((target_ip, 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
+def _search_key_for_name(scan_name: str) -> str:
+    if not scan_name:
+        return "Other"
+    ch = scan_name.strip()[0].upper()
+    for grp, key in (
+        ("ABC", "Abc"),
+        ("DEF", "Def"),
+        ("GHI", "Ghi"),
+        ("JKL", "Jkl"),
+        ("MNO", "Mno"),
+        ("PQRS", "Pqrs"),
+        ("TUV", "Tuv"),
+        ("WXYZ", "Wxyz"),
+    ):
+        if ch in grp:
+            return key
+    return "Other"
+
+
+def _sync_mfp_ip_once(last_checked_ip: str) -> str:
+    """
+    If this PC's local IPv4 address changed (e.g. after reboot or DHCP renewal),
+    verify `/wcd/abbr.xml` on the D410/D420 MFP and automatically update `<Address>` to the new IP.
+    """
+    profile_path = _get_appdata_dir() / "scan_profile.json"
+    if not profile_path.exists():
+        return last_checked_ip
+
+    try:
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        mfp_ip = str(profile.get("mfp_ip") or "").strip()
+        scan_name = str(profile.get("scan_name") or "").strip()
+        port = int(profile.get("port") or DEFAULT_FTP_PORT)
+        admin_password = str(profile.get("admin_password") or "")
+        if not mfp_ip or not scan_name:
+            return last_checked_ip
+
+        current_ip = _get_local_ip_towards(mfp_ip)
+        if not current_ip or current_ip.startswith("127."):
+            return last_checked_ip
+
+        if current_ip == last_checked_ip:
+            return last_checked_ip
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(cj),
+            urllib.request.HTTPSHandler(context=ctx),
+        )
+        opener.addheaders = [("User-Agent", "Mozilla/5.0"), ("Accept-Language", "ko,en-US;q=0.7")]
+
+        base_url = f"http://{mfp_ip}"
+        opener.open(f"{base_url}/wcd/index.html", timeout=3.0).read()
+        try:
+            opener.open(f"{base_url}/wcd/system_device.xml", timeout=3.0).read()
+        except Exception:
+            pass
+
+        if admin_password:
+            login_payload = urllib.parse.urlencode(
+                {"func": "PSL_LP0_LOG", "R_ADM": "Admin", "password": admin_password}
+            ).encode("utf-8")
+            try:
+                opener.open(f"{base_url}/wcd/ulogin.cgi", data=login_payload, timeout=3.0).read()
+            except Exception:
+                pass
+
+        abbr_xml = opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read().decode("utf-8", errors="ignore")
+
+        # Check if `scan_name` is already registered with `current_ip` and `port`
+        existing_no = None
+        for m in re.finditer(r"<Abbr>(.*?)</Abbr>", abbr_xml, re.DOTALL):
+            block = m.group(1)
+            nm = re.search(r"<Name>([^<]+)</Name>", block)
+            no = re.search(r"<AbbrNo>(\d+)</AbbrNo>", block)
+            addr = re.search(r"<Address>([^<]+)</Address>", block)
+            pno = re.search(r"<PortNo>(\d+)</PortNo>", block)
+            if nm and no and nm.group(1).strip().lower() == scan_name.lower():
+                existing_no = no.group(1).strip()
+                if addr and addr.group(1).strip() == current_ip and (not pno or int(pno.group(1)) == port):
+                    return current_ip
+                break
+
+        # IP changed (or entry missing) -> delete old entry and re-register with new IP
+        if existing_no:
+            del_payload = urllib.parse.urlencode(
+                {"func": "PSL_C_ABR_DEL", "C_ABR_H_NUM": existing_no, "C_ABR_H_AKI": "Public", "C_ABR_H_FAV": ""}
+            ).encode("utf-8")
+            opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
+            opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read()
+
+        new_payload = urllib.parse.urlencode(
+            {"func": "PSL_C_ABR_NEW", "H_NEW": "new", "S_SMO": "Ftp", "H_AKI": "Public", "H_FAV": ""}
+        ).encode("utf-8")
+        opener.open(f"{base_url}/wcd/scan.cgi", data=new_payload, timeout=4.0).read()
+        try:
+            opener.open(f"{base_url}/wcd/abbr_edit.xml", timeout=3.5).read()
+        except Exception:
+            pass
+
+        form_fields = {
+            "func": "PSL_C_A_FTP_PTR",
+            "H_NUM": "new",
+            "H_AKI": "Public",
+            "H_FAV": "",
+            "R_NUM_": "Space",
+            "T_NAM": scan_name,
+            "C_LANG": "Other",
+            "T_FURI": scan_name,
+            "S_SER": _search_key_for_name(scan_name),
+            "C_WEL": "WellUse",
+            "T_HOS": current_ip,
+            "T_DIR": ".",
+            "T_LOG": DEFAULT_FTP_USER,
+            "P_PAS": DEFAULT_FTP_PASS,
+            "S_ANO": "false",
+            "S_PAS": "true",
+            "S_PRX": "false",
+            "T_POR": str(port),
+            "R_REF": "Level",
+        }
+        opener.open(f"{base_url}/wcd/scan.cgi", data=urllib.parse.urlencode(form_fields).encode("utf-8"), timeout=5.0).read()
+        return current_ip
+    except Exception:
+        return last_checked_ip
+
+
+def start_auto_ip_sync_daemon() -> None:
+    """Start a background thread that monitors local IP changes and keeps the D410 address book in sync."""
+    def _loop() -> None:
+        last_ip = ""
+        while True:
+            last_ip = _sync_mfp_ip_once(last_ip)
+            time.sleep(60)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+
 def _stage_daemon_to_appdata() -> tuple[str, Optional[Path], Path]:
     """
     Copy the background FTP daemon into a permanent AppData directory
@@ -664,7 +855,6 @@ if __name__ == "__main__":
     server = BuiltinScanFtpServer(root_dir=Path(args.dir), port=args.port)
     ok, bound_port = server.start()
     if ok:
-        import time
-
+        start_auto_ip_sync_daemon()
         while True:
             time.sleep(3600)

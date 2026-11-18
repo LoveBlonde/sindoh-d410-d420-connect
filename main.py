@@ -19,7 +19,12 @@ os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
 if "--daemon" in sys.argv:
     import argparse
     import time
-    from core.ftp_scan_server import BuiltinScanFtpServer, DEFAULT_FTP_PORT, get_default_scan_dir
+    from core.ftp_scan_server import (
+        BuiltinScanFtpServer,
+        DEFAULT_FTP_PORT,
+        get_default_scan_dir,
+        start_auto_ip_sync_daemon,
+    )
 
     _parser = argparse.ArgumentParser(add_help=False)
     _parser.add_argument("--daemon", action="store_true")
@@ -29,6 +34,7 @@ if "--daemon" in sys.argv:
     _srv = BuiltinScanFtpServer(root_dir=Path(_args.dir), port=_args.port)
     _ok, _ = _srv.start()
     if _ok:
+        start_auto_ip_sync_daemon()
         while True:
             time.sleep(3600)
     raise SystemExit(0)
