@@ -183,7 +183,7 @@ class D410ConnectApp(ctk.CTk):
         self.printer_name_var = tk.StringVar(value="SINDOH D410/D420 Series")
         self.set_default_printer_var = tk.BooleanVar(value=True)
         self.scan_name_var = tk.StringVar(value=default_user)
-        self.scan_protocol_var = tk.StringVar(value="내장 WebDAV (권장)")
+        self.scan_protocol_var = tk.StringVar(value="WebDAV (신도 원클릭 · 권장)")
         self.pc_username_var = tk.StringVar(value=default_user)
         self.pc_password_var = tk.StringVar(value="")
         self.mfp_admin_pw_var = tk.StringVar(value="")
@@ -1030,7 +1030,7 @@ class D410ConnectApp(ctk.CTk):
             ctk.CTkLabel(
                 s_row1,
                 text="복합기 주소록 이름:",
-                width=130,
+                width=140,
                 font=ctk.CTkFont(family=self.font_family, size=13),
                 text_color=COLOR_TEXT_DARK,
                 anchor="w",
@@ -1038,26 +1038,32 @@ class D410ConnectApp(ctk.CTk):
             ctk.CTkEntry(
                 s_row1,
                 textvariable=self.scan_name_var,
-                placeholder_text="예: 홍길동",
+                placeholder_text="복합기 스캔 화면에 표시될 내 이름 (예: 홍길동)",
                 font=ctk.CTkFont(family=self.font_family, size=13),
-                width=145,
+                width=260,
                 height=32,
-            ).pack(side="left", padx=(4, 12))
+            ).pack(side="left", padx=(4, 0))
 
+            s_row_proto = ctk.CTkFrame(s_card, fg_color="transparent")
+            s_row_proto.pack(fill="x", padx=18, pady=(6, 4))
             ctk.CTkLabel(
-                s_row1,
-                text="전송 방식:",
+                s_row_proto,
+                text="주소록 전송 방식:",
+                width=140,
                 font=ctk.CTkFont(family=self.font_family, size=13),
                 text_color=COLOR_TEXT_DARK,
-            ).pack(side="left", padx=(0, 6))
-            ctk.CTkSegmentedButton(
-                s_row1,
-                values=["내장 WebDAV (권장)", "내장 FTP", "SMB 공유"],
-                variable=self.scan_protocol_var,
-                font=ctk.CTkFont(family=self.font_family, size=12, weight="bold"),
-                selected_color=COLOR_PRIMARY,
-                command=self._on_scan_protocol_changed,
+                anchor="w",
             ).pack(side="left")
+            ctk.CTkSegmentedButton(
+                s_row_proto,
+                values=["WebDAV (신도 원클릭 · 권장)", "FTP (내장 서버)", "SMB (공유폴더)"],
+                variable=self.scan_protocol_var,
+                font=ctk.CTkFont(family=self.font_family, size=13, weight="bold"),
+                selected_color=COLOR_PRIMARY,
+                height=34,
+                width=380,
+                command=self._on_scan_protocol_changed,
+            ).pack(side="left", padx=(4, 0))
 
             self.ftp_notice_lbl = ctk.CTkLabel(
                 s_card,

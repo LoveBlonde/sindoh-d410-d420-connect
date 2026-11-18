@@ -914,7 +914,8 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
         abbr_xml = opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read().decode("utf-8", errors="ignore")
 
         # Check if `scan_name` is already registered with `current_ip` and `port`
-        existing_no = None
+        matching_nos = []
+        already_up_to_date = False
         for m in re.finditer(r"<Abbr>(.*?)</Abbr>", abbr_xml, re.DOTALL):
             block = m.group(1)
             nm = re.search(r"<Name>([^<]+)</Name>", block)
@@ -923,7 +924,7 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
             pno = re.search(r"<PortNo>(\d+)</PortNo>", block)
             smode = re.search(r"<SendMode>([^<]+)</SendMode>", block)
             if nm and no and nm.group(1).strip().lower() == scan_name.lower():
-                existing_no = no.group(1).strip()
+                matching_nos.append(no.group(1).strip())
                 expected_mode = "webdav" if is_webdav else "ftp"
                 mode_matches = (not smode) or (smode.group(1).strip().lower() == expected_mode)
                 if (
@@ -932,16 +933,26 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
                     and (not pno or int(pno.group(1)) == port)
                     and mode_matches
                 ):
-                    return current_ip
-                break
+                    already_up_to_date = True
 
-        # IP changed (or entry missing) -> delete old entry and re-register with new IP
-        if existing_no:
+        # If exactly 1 entry exists and its IP/port/mode already match, nothing to do!
+        if already_up_to_date and len(matching_nos) == 1:
+            return current_ip
+
+        # IP changed, duplicate entries exist, or entry missing -> delete all matching entries and re-register cleanly once
+        for existing_no in matching_nos:
             del_payload = urllib.parse.urlencode(
                 {"func": "PSL_C_ABR_DEL", "C_ABR_H_NUM": existing_no, "C_ABR_H_AKI": "Public", "C_ABR_H_FAV": ""}
             ).encode("utf-8")
-            opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
-            opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read()
+            try:
+                opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
+            except Exception:
+                pass
+        if matching_nos:
+            try:
+                opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read()
+            except Exception:
+                pass
 
         send_mode_str = "WebDav" if is_webdav else "Ftp"
         new_payload = urllib.parse.urlencode(
@@ -1011,6 +1022,8 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
 def start_auto_ip_sync_daemon() -> None:
     """Start a background thread that monitors local IP changes and keeps the D410 address book in sync."""
     def _loop() -> None:
+        # Wait 25s before the first check so we never race with the foreground installer's initial registration
+        time.sleep(25)
         last_ip = ""
         while True:
             last_ip = _sync_mfp_ip_once(last_ip)

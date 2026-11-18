@@ -213,23 +213,30 @@ def register_km_wcd_address_book(
         except Exception:
             pass
 
-        for m in re.finditer(r"<Abbr>\s*<AbbrNo>(\d+)</AbbrNo>\s*<Name>([^<]+)</Name>", abbr_xml):
-            existing_no, existing_name = m.group(1).strip(), m.group(2).strip()
-            if existing_name.lower() == scan_name.strip().lower():
-                log(f"기존 동일 이름 주소록 항목([{existing_name}], 번호 #{existing_no}) 갱신을 위해 정리 중...")
-                del_payload = urllib.parse.urlencode(
-                    {
-                        "func": "PSL_C_ABR_DEL",
-                        "C_ABR_H_NUM": existing_no,
-                        "C_ABR_H_AKI": "Public",
-                        "C_ABR_H_FAV": "",
-                    }
-                ).encode("utf-8")
-                try:
-                    opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
-                    abbr_xml = opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read().decode("utf-8", errors="ignore")
-                except Exception:
-                    pass
+        for m in re.finditer(r"<Abbr>(.*?)</Abbr>", abbr_xml, re.DOTALL):
+            block = m.group(1)
+            no_m = re.search(r"<AbbrNo>(\d+)</AbbrNo>", block)
+            nm_m = re.search(r"<Name>([^<]+)</Name>", block)
+            if no_m and nm_m:
+                existing_no, existing_name = no_m.group(1).strip(), nm_m.group(1).strip()
+                if existing_name.lower() == scan_name.strip().lower():
+                    log(f"기존 동일 이름 주소록 항목([{existing_name}], 번호 #{existing_no}) 갱신을 위해 정리 중...")
+                    del_payload = urllib.parse.urlencode(
+                        {
+                            "func": "PSL_C_ABR_DEL",
+                            "C_ABR_H_NUM": existing_no,
+                            "C_ABR_H_AKI": "Public",
+                            "C_ABR_H_FAV": "",
+                        }
+                    ).encode("utf-8")
+                    try:
+                        opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
+                    except Exception:
+                        pass
+        try:
+            abbr_xml = opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
 
         # 3. Enter "New Registration" state (`PSL_C_ABR_NEW`) and load `/wcd/abbr_edit.xml`
         proto_upper = protocol.upper()
@@ -475,23 +482,9 @@ def configure_scanner_cross_platform(
         )
 
     if is_builtin_webdav:
-        # 1. Save profile & start built-in background WebDAV/FTP receiver daemon
-        save_scan_profile(
-            mfp_ip=mfp_ip,
-            scan_name=scan_name,
-            port=webdav_port,
-            admin_password=mfp_admin_password,
-            protocol="WEBDAV",
-        )
+        # 1. Start built-in background WebDAV/FTP receiver daemon
         _, active_dav_port, _ = ensure_background_ftp_agent(
             scan_dir=scan_dir, port=ftp_port, webdav_port=webdav_port, log_cb=log_cb
-        )
-        save_scan_profile(
-            mfp_ip=mfp_ip,
-            scan_name=scan_name,
-            port=active_dav_port,
-            admin_password=mfp_admin_password,
-            protocol="WEBDAV",
         )
         target_proto = "WEBDAV"
         target_folder = "/"
@@ -499,22 +492,8 @@ def configure_scanner_cross_platform(
         target_pass = DEFAULT_FTP_PASS
         target_port = active_dav_port
     elif is_builtin_ftp:
-        save_scan_profile(
-            mfp_ip=mfp_ip,
-            scan_name=scan_name,
-            port=ftp_port,
-            admin_password=mfp_admin_password,
-            protocol="FTP",
-        )
         _, _, active_ftp_port = ensure_background_ftp_agent(
             scan_dir=scan_dir, port=ftp_port, webdav_port=webdav_port, log_cb=log_cb
-        )
-        save_scan_profile(
-            mfp_ip=mfp_ip,
-            scan_name=scan_name,
-            port=active_ftp_port,
-            admin_password=mfp_admin_password,
-            protocol="FTP",
         )
         target_proto = "FTP"
         target_folder = "."
@@ -550,6 +529,16 @@ def configure_scanner_cross_platform(
         log_cb=log_cb,
     )
     log(msg)
+
+    # 4. Persist profile AFTER foreground registration completes so the background IP sync daemon never races with us
+    if is_builtin_webdav or is_builtin_ftp:
+        save_scan_profile(
+            mfp_ip=mfp_ip,
+            scan_name=scan_name,
+            port=target_port,
+            admin_password=mfp_admin_password,
+            protocol=target_proto,
+        )
 
     proto_display = "WebDAV" if is_builtin_webdav else ("FTP" if is_builtin_ftp else "SMB")
     return ScanSetupResult(
