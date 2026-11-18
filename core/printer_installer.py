@@ -8,6 +8,7 @@ Supports:
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -69,6 +70,24 @@ def parse_inf_driver_names(inf_path: Path) -> List[str]:
     return names
 
 
+def _filter_real_files(paths: List[Path]) -> List[Path]:
+    """Filter out macOS resource fork files (`._*`) and `__MACOSX` metadata directories."""
+    result: List[Path] = []
+    for p in paths:
+        if p.name.startswith("._") or "__MACOSX" in p.parts:
+            continue
+        if p.suffix.lower() == ".zip":
+            if not zipfile.is_zipfile(p):
+                if p.name == "KM_Default_Driver.zip":
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
+                continue
+        result.append(p)
+    return result
+
+
 def find_local_driver_source(custom_path: Optional[str] = None) -> Optional[Path]:
     """
     Locate driver archive/folder:
@@ -79,6 +98,8 @@ def find_local_driver_source(custom_path: Optional[str] = None) -> Optional[Path
     if custom_path:
         p = Path(custom_path)
         if p.exists():
+            if p.is_file() and p.suffix.lower() == ".zip" and not zipfile.is_zipfile(p):
+                return None
             return p
 
     drv_root = get_project_drivers_dir()
@@ -86,26 +107,26 @@ def find_local_driver_source(custom_path: Optional[str] = None) -> Optional[Path
 
     if sys_name == "windows":
         win_dir = drv_root / "windows"
-        infs = list(win_dir.rglob("*.inf"))
+        infs = _filter_real_files(list(win_dir.rglob("*.inf")))
         if infs:
             return infs[0].parent
-        zips = list(win_dir.rglob("*.zip"))
+        zips = _filter_real_files(list(win_dir.rglob("*.zip")))
         if zips:
             return zips[0]
         # Check SindohConnect local cache on Windows
         local_appdata = os.environ.get("LOCALAPPDATA", "")
         if local_appdata:
             km_cache = Path(local_appdata) / "SindohConnect" / "drivers-cache" / "KM.zip"
-            if km_cache.exists():
+            if km_cache.exists() and zipfile.is_zipfile(km_cache):
                 return km_cache
     elif sys_name == "darwin":
         mac_dir = drv_root / "macos"
         for ext in ("*.pkg", "*.gz", "*.ppd", "*.zip", "*.dmg"):
-            found = list(mac_dir.rglob(ext))
+            found = _filter_real_files(list(mac_dir.rglob(ext)))
             if found:
                 return found[0]
         km_mac_cache = Path.home() / "Library" / "Application Support" / "SindohConnect" / "drivers-cache" / "KM.zip"
-        if km_mac_cache.exists():
+        if km_mac_cache.exists() and zipfile.is_zipfile(km_mac_cache):
             return km_mac_cache
 
     return None
@@ -124,19 +145,39 @@ def ensure_driver_package(
 
     drv_root = get_project_drivers_dir()
     sys_name = platform.system().lower()
-    url = SINDOH_DEFAULT_DRV_API_WIN if sys_name == "windows" else SINDOH_DEFAULT_DRV_API_MAC
+    api_url = SINDOH_DEFAULT_DRV_API_WIN if sys_name == "windows" else SINDOH_DEFAULT_DRV_API_MAC
     target_sub = "windows" if sys_name == "windows" else "macos"
     target_zip = drv_root / target_sub / "KM_Default_Driver.zip"
 
     try:
         if log_cb:
             log_cb("신도리코 통합 드라이버 서버에서 KM 호환 드라이버를 다운로드하는 중...")
-        urllib.request.urlretrieve(url, str(target_zip))
-        if target_zip.exists() and target_zip.stat().st_size > 100_000:
+        with urllib.request.urlopen(api_url, timeout=8.0) as resp:
+            raw_bytes = resp.read()
+
+        # The Sindoh API endpoint returns a JSON metadata payload containing `content.downloadUrl`
+        download_url = api_url
+        try:
+            meta = json.loads(raw_bytes.decode("utf-8"))
+            if isinstance(meta, dict) and "content" in meta and "downloadUrl" in meta["content"]:
+                download_url = meta["content"]["downloadUrl"]
+        except Exception:
+            pass
+
+        if download_url != api_url:
+            urllib.request.urlretrieve(download_url, str(target_zip))
+        else:
+            target_zip.write_bytes(raw_bytes)
+
+        if target_zip.exists() and zipfile.is_zipfile(target_zip):
             if log_cb:
                 log_cb(f"드라이버 다운로드 완료 ({target_zip.stat().st_size // (1024*1024)}MB)")
             return target_zip
+        elif target_zip.exists():
+            target_zip.unlink(missing_ok=True)
     except Exception as e:
+        if target_zip.exists():
+            target_zip.unlink(missing_ok=True)
         if log_cb:
             log_cb(f"온라인 드라이버 다운로드 생략 (OS 내장 호환 드라이버 사용 예정): {e}")
 
@@ -169,16 +210,16 @@ def install_printer_windows(
 
     try:
         if src:
-            if src.is_file() and src.suffix.lower() == ".zip":
+            if src.is_file() and src.suffix.lower() == ".zip" and zipfile.is_zipfile(src):
                 extracted_dir = Path(tempfile.mkdtemp(prefix="sindoh_d410_drv_"))
                 log(f"드라이버 압축 해제 중: {src.name}")
                 with zipfile.ZipFile(src, "r") as zf:
                     zf.extractall(extracted_dir)
-                inf_files = list(extracted_dir.rglob("*.inf"))
+                inf_files = _filter_real_files(list(extracted_dir.rglob("*.inf")))
             elif src.is_file() and src.suffix.lower() == ".inf":
                 inf_files = [src]
             elif src.is_dir():
-                inf_files = list(src.rglob("*.inf"))
+                inf_files = _filter_real_files(list(src.rglob("*.inf")))
 
         for inf in inf_files:
             parsed = parse_inf_driver_names(inf)
@@ -332,12 +373,12 @@ def install_printer_macos(
         ppd_file: Optional[Path] = None
 
         if src:
-            if src.is_file() and src.suffix.lower() == ".zip":
+            if src.is_file() and src.suffix.lower() == ".zip" and zipfile.is_zipfile(src):
                 extracted_dir = Path(tempfile.mkdtemp(prefix="sindoh_mac_drv_"))
                 with zipfile.ZipFile(src, "r") as zf:
                     zf.extractall(extracted_dir)
-                pkgs = list(extracted_dir.rglob("*.pkg"))
-                ppds = list(extracted_dir.rglob("*.gz")) + list(extracted_dir.rglob("*.ppd"))
+                pkgs = _filter_real_files(list(extracted_dir.rglob("*.pkg")))
+                ppds = _filter_real_files(list(extracted_dir.rglob("*.gz")) + list(extracted_dir.rglob("*.ppd")))
                 if pkgs:
                     pkg_file = pkgs[0]
                 if ppds:

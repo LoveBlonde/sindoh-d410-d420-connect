@@ -1186,33 +1186,41 @@ class D410ConnectApp(ctk.CTk):
         def worker() -> None:
             self.printer_result_text = ""
             self.scan_result_text = ""
+            try:
+                if mode in ("both", "printer"):
+                    try:
+                        res_p = install_printer_cross_platform(
+                            ip=dev.ip,
+                            printer_name=printer_name,
+                            set_default=set_default,
+                            custom_driver_path=custom_drv,
+                            log_cb=log_safe,
+                            dry_run=dry_run,
+                        )
+                        self.printer_result_text = f"{res_p.title} — {res_p.detail}"
+                    except Exception as ep:
+                        log_safe(f"프린터 설치 중 예외 발생: {ep}")
+                        self.printer_result_text = f"프린터 설치 오류 — {ep}"
 
-            if mode in ("both", "printer"):
-                res_p = install_printer_cross_platform(
-                    ip=dev.ip,
-                    printer_name=printer_name,
-                    set_default=set_default,
-                    custom_driver_path=custom_drv,
-                    log_cb=log_safe,
-                    dry_run=dry_run,
-                )
-                self.printer_result_text = f"{res_p.title} — {res_p.detail}"
-
-            if mode in ("both", "scan"):
-                res_s = configure_scanner_cross_platform(
-                    mfp_ip=dev.ip,
-                    scan_name=scan_name,
-                    protocol=protocol,
-                    pc_username=pc_user,
-                    pc_password=pc_pw,
-                    mfp_admin_password=admin_pw,
-                    log_cb=log_safe,
-                    dry_run=dry_run,
-                )
-                self.scan_result_text = f"{res_s.title} — {res_s.detail}"
-
-            self.install_running = False
-            self.after(600, lambda: self._show_step(5))
+                if mode in ("both", "scan"):
+                    try:
+                        res_s = configure_scanner_cross_platform(
+                            mfp_ip=dev.ip,
+                            scan_name=scan_name,
+                            protocol=protocol,
+                            pc_username=pc_user,
+                            pc_password=pc_pw,
+                            mfp_admin_password=admin_pw,
+                            log_cb=log_safe,
+                            dry_run=dry_run,
+                        )
+                        self.scan_result_text = f"{res_s.title} — {res_s.detail}"
+                    except Exception as es:
+                        log_safe(f"스캔 설정 중 예외 발생: {es}")
+                        self.scan_result_text = f"스캔 설정 오류 — {es}"
+            finally:
+                self.install_running = False
+                self.after(600, lambda: self._show_step(5))
 
         threading.Thread(target=worker, daemon=True).start()
 
