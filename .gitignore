@@ -7,6 +7,7 @@ dist/
 *.spec
 .venv/
 venv/
+.python/
 
 # Proprietary vendor driver binaries (users can drop their own or let the app fetch/use OS drivers)
 drivers/windows/*.zip

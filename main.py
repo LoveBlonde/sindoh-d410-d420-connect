@@ -11,11 +11,76 @@ import platform
 import subprocess
 import sys
 import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox
 from pathlib import Path
 from typing import List, Optional
 
+os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
+
+if "--daemon" in sys.argv:
+    import argparse
+    import time
+    from core.ftp_scan_server import BuiltinScanFtpServer, DEFAULT_FTP_PORT, get_default_scan_dir
+
+    _parser = argparse.ArgumentParser(add_help=False)
+    _parser.add_argument("--daemon", action="store_true")
+    _parser.add_argument("--port", type=int, default=DEFAULT_FTP_PORT)
+    _parser.add_argument("--dir", type=str, default=str(get_default_scan_dir()))
+    _args, _ = _parser.parse_known_args()
+    _srv = BuiltinScanFtpServer(root_dir=Path(_args.dir), port=_args.port)
+    _ok, _ = _srv.start()
+    if _ok:
+        while True:
+            time.sleep(3600)
+    raise SystemExit(0)
+
+
+def _ensure_runtime_environment() -> None:
+    """
+    If launched directly via `python3 main.py` on a Python that lacks `tkinter` (e.g. Homebrew Python
+    without `python-tk`), has broken macOS system Tcl/Tk 8.5 (which renders a black window on macOS),
+    or lacks `customtkinter` (e.g. PEP 668 externally-managed environment),
+    automatically switch to or create the project `.venv` with a modern Tcl/Tk 8.6+ Python interpreter.
+    """
+    if getattr(sys, "frozen", False) or os.environ.get("SINDOH_BOOTSTRAPPED") == "1":
+        return
+
+    is_mac = platform.system().lower() == "darwin"
+    try:
+        import tkinter as _tk
+        import customtkinter  # noqa: F401
+        if not is_mac or float(_tk.TkVersion) >= 8.6:
+            return
+    except Exception:
+        pass
+
+    project_dir = Path(__file__).resolve().parent
+    is_win = platform.system().lower() == "windows"
+    venv_py = project_dir / ".venv" / ("Scripts/python.exe" if is_win else "bin/python3")
+
+    def _can_run_gui(py_bin: str) -> bool:
+        try:
+            chk = "import tkinter, customtkinter; raise SystemExit(0 if float(tkinter.TkVersion) >= 8.6 else 1)" if is_mac else "import tkinter, customtkinter"
+            r = subprocess.run([py_bin, "-c", chk], capture_output=True, timeout=5)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    # 1. If .venv is already ready with Tcl/Tk 8.6+, re-exec into it immediately
+    if venv_py.exists() and _can_run_gui(str(venv_py)):
+        os.environ["SINDOH_BOOTSTRAPPED"] = "1"
+        os.execv(str(venv_py), [str(venv_py), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+    # 2. Delegate to run_macos.command on macOS/Linux if available
+    runner_sh = project_dir / "run_macos.command"
+    if not is_win and runner_sh.exists():
+        os.environ["SINDOH_BOOTSTRAPPED"] = "1"
+        os.execv("/bin/bash", ["/bin/bash", str(runner_sh), *sys.argv[1:]])
+
+
+_ensure_runtime_environment()
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from core.snmp_discovery import (
@@ -1285,4 +1350,8 @@ class D410ConnectApp(ctk.CTk):
 
 if __name__ == "__main__":
     app = D410ConnectApp()
+    if "--self-test" in sys.argv:
+        app.after(250, app.destroy)
     app.mainloop()
+    if "--self-test" in sys.argv:
+        print("SELF_TEST_OK")

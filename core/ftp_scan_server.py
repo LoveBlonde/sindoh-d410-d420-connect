@@ -402,12 +402,18 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
     # 3. Spawn detached background process running this module as `__main__`
     script_path = Path(__file__).resolve()
     py_exe = sys.executable
-    if sys_name == "windows" and py_exe.lower().endswith("python.exe"):
+    is_frozen = getattr(sys, "frozen", False)
+    if sys_name == "windows" and not is_frozen and py_exe.lower().endswith("python.exe"):
         pyw = Path(py_exe).with_name("pythonw.exe")
         if pyw.exists():
             py_exe = str(pyw)
 
-    cmd = [py_exe, str(script_path), "--daemon", "--port", str(port), "--dir", str(target_dir)]
+    if is_frozen:
+        cmd = [py_exe, "--daemon", "--port", str(port), "--dir", str(target_dir)]
+        reg_cmd_str = f'"{py_exe}" --daemon --port {port} --dir "{target_dir}"'
+    else:
+        cmd = [py_exe, str(script_path), "--daemon", "--port", str(port), "--dir", str(target_dir)]
+        reg_cmd_str = f'"{py_exe}" "{script_path}" --daemon --port {port} --dir "{target_dir}"'
     try:
         if sys_name == "windows":
             flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
@@ -424,8 +430,7 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
                     0,
                     winreg.KEY_SET_VALUE,
                 ) as key:
-                    cmd_str = f'"{py_exe}" "{script_path}" --daemon --port {port} --dir "{target_dir}"'
-                    winreg.SetValueEx(key, "SindohD410ScanReceiver", 0, winreg.REG_SZ, cmd_str)
+                    winreg.SetValueEx(key, "SindohD410ScanReceiver", 0, winreg.REG_SZ, reg_cmd_str)
             except Exception:
                 pass
         else:
