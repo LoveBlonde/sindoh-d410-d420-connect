@@ -373,10 +373,10 @@ def scan_network(
     completed = 0
 
     with ThreadPoolExecutor(max_workers=64) as pool:
-        future_map = {pool.submit(probe_single_ip, ip, 0.55): ip for ip in target_ips}
+        future_map = {pool.submit(probe_single_ip, ip, 0.25): ip for ip in target_ips}
         for fut in as_completed(future_map):
             completed += 1
-            if progress_callback and (completed % 10 == 0 or completed == total):
+            if progress_callback and (completed % 32 == 0 or completed == total):
                 progress_callback(completed, total)
             dev = fut.result()
             if dev is not None:

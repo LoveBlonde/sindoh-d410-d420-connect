@@ -190,6 +190,26 @@ class D410ConnectApp(ctk.CTk):
 
         self._build_layout()
         self._show_step(1)  # Start on "설치 유형 선택하기" just like the screenshot (and allow going back to 환영합니다)
+        self.after(50, self._activate_window_focus)
+        self.after(80, self._start_network_scan)  # Pre-scan network in background while user is on Step 1
+
+    def _activate_window_focus(self) -> None:
+        """Bring the GUI window to active foreground focus so the very first button click is never swallowed by OS focus."""
+        try:
+            self.lift()
+            self.focus_force()
+            if platform.system().lower() == "darwin":
+                subprocess.Popen(
+                    [
+                        "osascript",
+                        "-e",
+                        f'tell application "System Events" to set frontmost of the first process whose unix id is {os.getpid()} to true',
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        except Exception:
+            pass
 
     # ─────────────────────────────────────────────────────────────────────────
     # Base Layout (Left Sidebar + Right Main Content + Bottom Footer Bar)
@@ -667,10 +687,15 @@ class D410ConnectApp(ctk.CTk):
         )
         sim_btn.pack(side="right", padx=12, pady=10)
 
-        if not self.discovered_devices and not self.is_scanning:
+        if self.discovered_devices:
+            self._render_device_list()
+        elif not self.is_scanning:
             self._start_network_scan()
         else:
-            self._render_device_list()
+            if hasattr(self, "rescan_btn") and self.rescan_btn.winfo_exists():
+                self.rescan_btn.configure(state="disabled", text="탐색 중...")
+            if hasattr(self, "scan_status_lbl") and self.scan_status_lbl.winfo_exists():
+                self.scan_status_lbl.configure(text="네트워크 대역에서 D410s / D420 장치를 검색하고 있습니다...")
 
     def _start_network_scan(self) -> None:
         if self.is_scanning:
