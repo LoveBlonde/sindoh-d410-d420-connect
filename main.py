@@ -1016,7 +1016,7 @@ class D410ConnectApp(ctk.CTk):
 
             self.ftp_notice_lbl = ctk.CTkLabel(
                 s_card,
-                text="✓ 신도 원터치 방식과 동일하게 내장 FTP 스캔 수신 서버(포트 2121)가 백그라운드에서 자동 작동하므로,\n   별도의 Windows/Mac 공유폴더 설정이나 PC 로그인 비밀번호 입력 없이 Downloads/sindohScan 으로 스캔됩니다.",
+                text="✓ 신도 원터치 방식과 동일하게 내장 FTP 스캔 수신 서버(포트 2121)가 백그라운드에서 자동 작동하므로,\n   별도의 Windows/Mac 공유폴더 설정이나 PC 로그인 비밀번호 입력 없이 바탕화면(Desktop)/sindohScan 으로 스캔됩니다.",
                 font=ctk.CTkFont(family=self.font_family, size=12),
                 text_color=COLOR_PRIMARY,
                 justify="left",
@@ -1303,7 +1303,7 @@ class D410ConnectApp(ctk.CTk):
 
         ctk.CTkButton(
             btn_row,
-            text="📂  스캔 수신 폴더 열기 (Downloads/sindohScan)",
+            text="📂  스캔 수신 폴더 열기 (Desktop/sindohScan)",
             font=ctk.CTkFont(family=self.font_family, size=13, weight="bold"),
             fg_color="#EEF3FF",
             hover_color="#DCE7FF",

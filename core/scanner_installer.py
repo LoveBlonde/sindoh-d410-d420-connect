@@ -28,6 +28,7 @@ from core.ftp_scan_server import (
     DEFAULT_FTP_PORT,
     DEFAULT_FTP_USER,
     ensure_background_ftp_agent,
+    get_default_scan_dir,
 )
 
 
@@ -40,11 +41,8 @@ class ScanSetupResult:
 
 
 def get_default_scan_folder() -> Path:
-    """Return `~/Downloads/sindohScan` (matching sindoh Connect behavior on Windows & macOS)."""
-    downloads = Path.home() / "Downloads"
-    scan_dir = downloads / "sindohScan"
-    scan_dir.mkdir(parents=True, exist_ok=True)
-    return scan_dir
+    """Return `Desktop/sindohScan` on Windows (including OneDrive Desktop) & macOS."""
+    return get_default_scan_dir()
 
 
 def get_client_ip_for_mfp(mfp_ip: str) -> str:

@@ -33,8 +33,39 @@ PASV_PORT_MIN = 52100
 PASV_PORT_MAX = 52130
 
 
+def _get_desktop_dir() -> Path:
+    """
+    Resolve the user's actual Desktop directory on Windows (including OneDrive '바탕 화면' redirection)
+    and macOS (`~/Desktop`).
+    """
+    if platform.system().lower() == "windows":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            # CSIDL_DESKTOPDIRECTORY = 0x0010
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 0x0010, None, 0, buf) == 0 and buf.value:
+                p = Path(buf.value)
+                if p.exists():
+                    return p
+        except Exception:
+            pass
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            ) as key:
+                val, _ = winreg.QueryValueEx(key, "Desktop")
+                expanded = Path(os.path.expandvars(str(val)))
+                if expanded.exists():
+                    return expanded
+        except Exception:
+            pass
+    return Path.home() / "Desktop"
+
+
 def get_default_scan_dir() -> Path:
-    scan_dir = Path.home() / "Downloads" / "sindohScan"
+    scan_dir = _get_desktop_dir() / "sindohScan"
     scan_dir.mkdir(parents=True, exist_ok=True)
     return scan_dir
 
@@ -366,6 +397,33 @@ def is_port_listening_locally(port: int) -> bool:
         return False
 
 
+def _stop_existing_ftp_agent_on_port(port: int) -> None:
+    """Stop any previously running FTP scan receiver daemon on `port` so the new target directory takes effect."""
+    sys_name = platform.system().lower()
+    try:
+        if sys_name == "windows":
+            ps_kill = (
+                f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | "
+                f"Select-Object -ExpandProperty OwningProcess -Unique | "
+                f"Where-Object {{ $_ -gt 4 -and $_ -ne $PID }} | "
+                f"ForEach-Object {{ Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }}"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_kill],
+                capture_output=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        else:
+            subprocess.run(
+                ["/bin/sh", "-c", f"lsof -ti tcp:{port} | grep -v ^{os.getpid()}$ | xargs kill -9 2>/dev/null || true"],
+                capture_output=True,
+                timeout=4,
+            )
+    except Exception:
+        pass
+
+
 def ensure_background_ftp_agent(
     scan_dir: Optional[Path] = None,
     port: int = DEFAULT_FTP_PORT,
@@ -376,7 +434,8 @@ def ensure_background_ftp_agent(
     and register it for auto-start on login so scans keep arriving even after closing the installer UI.
     Also opens Windows Firewall for the FTP control + passive ports.
     """
-    target_dir = scan_dir or get_default_scan_dir()
+    target_dir = (scan_dir or get_default_scan_dir()).resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
     sys_name = platform.system().lower()
 
     # 1. Open Windows Firewall rules for FTP port & passive range
@@ -393,11 +452,14 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
         except Exception:
             pass
 
-    # 2. If already listening, return immediately
+    # 2. If an older FTP agent is already listening on `port`, restart it so `target_dir` (Desktop/sindohScan) applies
     if is_port_listening_locally(port):
-        if log_cb:
-            log_cb(f"내장 FTP 스캔 수신 서버가 이미 실행 중입니다 (포트: {port})")
-        return True, port
+        _stop_existing_ftp_agent_on_port(port)
+        import time
+        for _ in range(10):
+            if not is_port_listening_locally(port):
+                break
+            time.sleep(0.1)
 
     # 3. Spawn detached background process running this module as `__main__`
     script_path = Path(__file__).resolve()
