@@ -20,7 +20,7 @@
    - **macOS**: `.pkg` 드라이버 무인 설치(`installer -pkg`) 및 CUPS `lpadmin` 명령어로 `socket://IP:9100` 또는 `ipp://IP/ipp/print` 프린터 큐를 즉시 생성합니다.
 4. **내장 FTP 스캔 수신 서버 (공유폴더 설정 불필요, `sindoh Connect` 방식)**
    - Windows나 macOS에서 번거롭고 오류가 잦은 SMB 공유폴더/계정 암호 설정을 할 필요 없이, 프로그램 자체에 **초경량 내장 FTP 스캔 수신 서버(`core/ftp_scan_server.py`, 기본 포트 `2121`)**가 탑재되어 있습니다.
-   - 설치 시 백그라운드 스캔 수신 에이전트가 자동 실행 및 시작프로그램(Windows 레지스트리 Run / macOS LaunchAgents)에 등록되며, D410s/D420 웹 컨트롤러(`/wcd/scan.cgi`)에 내 PC의 FTP 수신 정보가 원클릭으로 매핑되어 스캔 즉시 `Downloads/sindohScan` 폴더로 파일이 들어옵니다.
+   - 설치 시 백그라운드 스캔 수신 에이전트가 자동 실행 및 시작프로그램(Windows 레지스트리 Run / 작업 스케줄러 / macOS LaunchAgents)에 등록되며, D410s/D420 웹 컨트롤러(`/wcd/scan.cgi`)에 내 PC의 FTP 수신 정보가 원클릭으로 매핑되어 스캔 즉시 바탕화면(`Desktop/sindohScan`) 폴더로 파일이 들어옵니다. (PC 내부 IP가 바뀌어도 백그라운드 에이전트가 자동으로 복합기 주소록 IP를 갱신합니다.)
 
 ---
 
