@@ -1,21 +1,25 @@
 """
-Zero-Dependency Built-in FTP Scan Receiver Daemon for Windows & macOS.
-Allows Sindoh D410 / D410s / D420 MFPs to send scanned PDF/JPEG/TIFF files directly
-to `~/Downloads/sindohScan` without any OS SMB file-sharing configuration, Windows password,
+Zero-Dependency Built-in WebDAV & FTP Scan Receiver Daemon for Windows & macOS.
+Allows Sindoh D410 / D410s / D420 / D450 MFPs to send scanned PDF/JPEG/TIFF files directly
+to `Desktop/sindohScan` without any OS SMB file-sharing configuration, Windows password,
 or macOS SMBv1/v3 compatibility issues.
 
 Supports:
-  - Standard RFC 959 FTP commands: USER, PASS, SYST, FEAT, TYPE, PWD, XPWD, CWD, CDUP,
-    MKD, XMKD, PASV, EPSV, PORT, STOR, APPE, LIST, NLST, NOOP, OPTS, SIZE, QUIT
-  - Both Passive (PASV / EPSV) and Active (PORT) data transfer modes
-  - Automatic Windows Firewall / macOS background daemon registration
+  - RFC 4918 WebDAV Server (`BuiltinScanWebDavServer`, Default port 50080):
+    OPTIONS, PROPFIND, PROPPATCH, MKCOL, PUT, GET, HEAD, DELETE, LOCK, UNLOCK, MOVE, COPY
+  - RFC 959 FTP Server (`BuiltinScanFtpServer`, Default port 2121):
+    USER, PASS, SYST, FEAT, TYPE, PWD, XPWD, CWD, CDUP, MKD, XMKD, PASV, EPSV, PORT, STOR, APPE, LIST, NLST, NOOP, OPTS, SIZE, QUIT
+  - Automatic 15-second DHCP IP change detection & MFP Address Book self-healing sync (WebDAV & FTP)
+  - Automatic Windows Firewall (`-Profile Any -RemoteAddress LocalSubnet`) & silent reboot startup registration
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import email.utils
 import http.cookiejar
+import http.server
 import json
 import os
 import platform
@@ -23,6 +27,7 @@ import random
 import re
 import shutil
 import socket
+import socketserver
 import ssl
 import subprocess
 import sys
@@ -34,6 +39,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 
+DEFAULT_WEBDAV_PORT = 50080
 DEFAULT_FTP_PORT = 2121
 DEFAULT_FTP_USER = "sindohscan"
 DEFAULT_FTP_PASS = "sindoh1234"
@@ -78,6 +84,357 @@ def get_default_scan_dir() -> Path:
     return scan_dir
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Built-in WebDAV Scan Receiver Server (HTTP PUT / PROPFIND / MKCOL / LOCK)
+# ─────────────────────────────────────────────────────────────────────────────
+class _ThreadingWebDavHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        RequestHandlerClass: type,
+        root_dir: Path,
+        on_file_received: Optional[Callable[[Path], None]] = None,
+        log_cb: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        self.root_dir = root_dir.resolve()
+        self.on_file_received = on_file_received
+        self.log_cb = log_cb
+        super().__init__(server_address, RequestHandlerClass)
+
+
+class _WebDavRequestHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args: object) -> None:
+        # Suppress console spam in background daemon mode
+        pass
+
+    def _log(self, msg: str) -> None:
+        srv: _ThreadingWebDavHTTPServer = self.server  # type: ignore[assignment]
+        if srv.log_cb:
+            srv.log_cb(msg)
+
+    def _read_request_body(self) -> bytes:
+        transfer_enc = (self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in transfer_enc:
+            body = bytearray()
+            while True:
+                line = self.rfile.readline()
+                if not line:
+                    break
+                chunk_len_str = line.split(b";", 1)[0].strip()
+                if not chunk_len_str:
+                    break
+                chunk_len = int(chunk_len_str, 16)
+                if chunk_len == 0:
+                    self.rfile.readline()
+                    break
+                body.extend(self.rfile.read(chunk_len))
+                self.rfile.read(2)  # trailing CRLF
+            return bytes(body)
+
+        content_len = int(self.headers.get("Content-Length") or 0)
+        if content_len > 0:
+            return self.rfile.read(content_len)
+        return b""
+
+    def _handle_expect_100(self) -> None:
+        expect = (self.headers.get("Expect") or "").lower()
+        if "100-continue" in expect:
+            try:
+                self.wfile.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+                self.wfile.flush()
+            except Exception:
+                pass
+
+    def _safe_target_path(self, raw_path: str) -> Path:
+        srv: _ThreadingWebDavHTTPServer = self.server  # type: ignore[assignment]
+        unquoted = urllib.parse.unquote(raw_path.split("?", 1)[0])
+        clean_name = Path(unquoted.replace("\\", "/")).name
+        if not clean_name or clean_name in (".", "/", "dav", "SindohScan", "sindohScan"):
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            clean_name = f"SCAN_{ts}.pdf"
+        target = srv.root_dir / clean_name
+        if target.exists():
+            stem = target.stem
+            suffix = target.suffix
+            ts = datetime.datetime.now().strftime("%H%M%S_%f")[:9]
+            target = srv.root_dir / f"{stem}_{ts}{suffix}"
+        return target
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(200, "OK")
+        self.send_header("DAV", "1, 2")
+        self.send_header("MS-Author-Via", "DAV")
+        self.send_header(
+            "Allow",
+            "OPTIONS, GET, HEAD, PUT, POST, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK",
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_PROPFIND(self) -> None:
+        self._handle_expect_100()
+        _ = self._read_request_body()
+        srv: _ThreadingWebDavHTTPServer = self.server  # type: ignore[assignment]
+
+        req_path = urllib.parse.unquote(self.path.split("?", 1)[0])
+        depth = (self.headers.get("Depth") or "0").strip()
+        clean_tail = Path(req_path.rstrip("/")).name
+
+        # Check if the MFP is probing a specific file that does not exist yet before uploading it
+        if clean_tail and "." in clean_tail and clean_tail.lower() not in ("dav", "sindohscan"):
+            candidate_file = srv.root_dir / clean_tail
+            if not candidate_file.exists():
+                self.send_response(404, "Not Found")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            now_http = email.utils.formatdate(candidate_file.stat().st_mtime, usegmt=True)
+            fsize = candidate_file.stat().st_size
+            xml_resp = f"""<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>{urllib.parse.quote(req_path)}</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>{clean_tail}</D:displayname>
+        <D:getcontentlength>{fsize}</D:getcontentlength>
+        <D:getlastmodified>{now_http}</D:getlastmodified>
+        <D:resourcetype/>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+        else:
+            # Directory collection response
+            href = req_path if req_path.endswith("/") else req_path + "/"
+            now_http = email.utils.formatdate(time.time(), usegmt=True)
+            items_xml = f"""  <D:response>
+    <D:href>{urllib.parse.quote(href)}</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>sindohScan</D:displayname>
+        <D:getlastmodified>{now_http}</D:getlastmodified>
+        <D:resourcetype><D:collection/></D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>"""
+
+            if depth != "0":
+                for item in srv.root_dir.iterdir():
+                    if item.is_file():
+                        f_href = href + urllib.parse.quote(item.name)
+                        f_mtime = email.utils.formatdate(item.stat().st_mtime, usegmt=True)
+                        f_size = item.stat().st_size
+                        items_xml += f"""
+  <D:response>
+    <D:href>{f_href}</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>{item.name}</D:displayname>
+        <D:getcontentlength>{f_size}</D:getcontentlength>
+        <D:getlastmodified>{f_mtime}</D:getlastmodified>
+        <D:resourcetype/>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>"""
+
+            xml_resp = f'<?xml version="1.0" encoding="utf-8"?>\n<D:multistatus xmlns:D="DAV:">\n{items_xml}\n</D:multistatus>'
+
+        payload = xml_resp.encode("utf-8")
+        self.send_response(207, "Multi-Status")
+        self.send_header("Content-Type", 'application/xml; charset="utf-8"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_PROPPATCH(self) -> None:
+        self._handle_expect_100()
+        _ = self._read_request_body()
+        req_path = urllib.parse.unquote(self.path.split("?", 1)[0])
+        xml_resp = f"""<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>{urllib.parse.quote(req_path)}</D:href>
+    <D:propstat>
+      <D:prop/>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"""
+        payload = xml_resp.encode("utf-8")
+        self.send_response(207, "Multi-Status")
+        self.send_header("Content-Type", 'application/xml; charset="utf-8"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_MKCOL(self) -> None:
+        self._handle_expect_100()
+        _ = self._read_request_body()
+        self.send_response(201, "Created")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_PUT(self) -> None:
+        self._handle_expect_100()
+        srv: _ThreadingWebDavHTTPServer = self.server  # type: ignore[assignment]
+        target = self._safe_target_path(self.path)
+        try:
+            data = self._read_request_body()
+            target.write_bytes(data)
+            self._log(f"WebDAV 스캔 파일 수신 완료: {target.name} ({len(data):,} bytes)")
+            if srv.on_file_received:
+                srv.on_file_received(target)
+            self.send_response(201, "Created")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        except Exception as e:
+            self._log(f"WebDAV 스캔 저장 오류: {e}")
+            self.send_response(500, "Internal Server Error")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    def do_POST(self) -> None:
+        self.do_PUT()
+
+    def do_LOCK(self) -> None:
+        self._handle_expect_100()
+        _ = self._read_request_body()
+        token = "opaquelocktoken:d410-d420-scan-lock"
+        xml_resp = f"""<?xml version="1.0" encoding="utf-8"?>
+<D:prop xmlns:D="DAV:">
+  <D:lockdiscovery>
+    <D:activelock>
+      <D:locktype><D:write/></D:locktype>
+      <D:lockscope><D:exclusive/></D:lockscope>
+      <D:depth>Infinity</D:depth>
+      <D:timeout>Second-3600</D:timeout>
+      <D:locktoken><D:href>{token}</D:href></D:locktoken>
+    </D:activelock>
+  </D:lockdiscovery>
+</D:prop>"""
+        payload = xml_resp.encode("utf-8")
+        self.send_response(200, "OK")
+        self.send_header("Lock-Token", f"<{token}>")
+        self.send_header("Content-Type", 'application/xml; charset="utf-8"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_UNLOCK(self) -> None:
+        self.send_response(204, "No Content")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_DELETE(self) -> None:
+        self.send_response(204, "No Content")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_MOVE(self) -> None:
+        self.send_response(201, "Created")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_COPY(self) -> None:
+        self.send_response(201, "Created")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_HEAD(self) -> None:
+        srv: _ThreadingWebDavHTTPServer = self.server  # type: ignore[assignment]
+        req_path = urllib.parse.unquote(self.path.split("?", 1)[0])
+        clean_tail = Path(req_path.rstrip("/")).name
+        if clean_tail and "." in clean_tail and clean_tail.lower() not in ("dav", "sindohscan"):
+            f = srv.root_dir / clean_tail
+            if not f.exists():
+                self.send_response(404, "Not Found")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+        self.send_response(200, "OK")
+        self.send_header("DAV", "1, 2")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        msg = b"Sindoh D410/D420 WebDAV Scan Receiver Active."
+        self.send_response(200, "OK")
+        self.send_header("DAV", "1, 2")
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(msg)))
+        self.end_headers()
+        self.wfile.write(msg)
+
+
+class BuiltinScanWebDavServer:
+    """In-process or standalone WebDAV HTTP server for receiving scans from D410 / D410s / D420."""
+
+    def __init__(
+        self,
+        root_dir: Optional[Path] = None,
+        port: int = DEFAULT_WEBDAV_PORT,
+        username: str = DEFAULT_FTP_USER,
+        password: str = DEFAULT_FTP_PASS,
+        on_file_received: Optional[Callable[[Path], None]] = None,
+        log_cb: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        self.root_dir = (root_dir or get_default_scan_dir()).resolve()
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        self.port = port
+        self.username = username
+        self.password = password
+        self.on_file_received = on_file_received
+        self.log_cb = log_cb
+        self._httpd: Optional[_ThreadingWebDavHTTPServer] = None
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> tuple[bool, int]:
+        if self._running:
+            return True, self.port
+
+        for candidate_port in (self.port, 50080, 50443, 50081):
+            try:
+                httpd = _ThreadingWebDavHTTPServer(
+                    ("0.0.0.0", candidate_port),
+                    _WebDavRequestHandler,
+                    root_dir=self.root_dir,
+                    on_file_received=self.on_file_received,
+                    log_cb=self.log_cb,
+                )
+                self._httpd = httpd
+                self.port = candidate_port
+                self._running = True
+                self._thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+                self._thread.start()
+                return True, self.port
+            except Exception:
+                continue
+        return False, self.port
+
+    def stop(self) -> None:
+        self._running = False
+        if self._httpd:
+            try:
+                self._httpd.shutdown()
+                self._httpd.server_close()
+            except Exception:
+                pass
+            self._httpd = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Built-in FTP Scan Receiver Server (Fallback & Dual-Protocol Support)
+# ─────────────────────────────────────────────────────────────────────────────
 class _FTPSession(threading.Thread):
     """Handles a single MFP FTP client connection."""
 
@@ -141,7 +498,6 @@ class _FTPSession(threading.Thread):
         return None
 
     def _safe_target_path(self, filename: str) -> Path:
-        # Strip any directory prefixes sent by MFP (e.g. "/sindohScan/SKM_C224e261117.pdf")
         clean_name = Path(filename.replace("\\", "/")).name
         if not clean_name:
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -187,7 +543,6 @@ class _FTPSession(threading.Thread):
                     elif cmd in ("PWD", "XPWD"):
                         self._send('257 "/" is current directory.')
                     elif cmd in ("CWD", "XCWD", "CDUP"):
-                        # Accept any CWD (e.g. /sindohScan or .) so MFP never fails on path mismatch
                         self._send("250 Directory successfully changed.")
                     elif cmd in ("MKD", "XMKD"):
                         self._send(f'257 "{arg}" directory created.')
@@ -240,7 +595,6 @@ class _FTPSession(threading.Thread):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        # Bind within predictable passive port range for firewall friendliness
         bound_port = 0
         ports = list(range(PASV_PORT_MIN, PASV_PORT_MAX + 1))
         random.shuffle(ports)
@@ -315,12 +669,12 @@ class _FTPSession(threading.Thread):
                     f.write(chunk)
                     total_bytes += len(chunk)
             self._send("226 Transfer complete.")
-            self._log(f"스캔 파일 수신 완료: {target.name} ({total_bytes:,} bytes)")
+            self._log(f"FTP 스캔 파일 수신 완료: {target.name} ({total_bytes:,} bytes)")
             if self.on_file_received:
                 self.on_file_received(target)
         except Exception as e:
             self._send("451 Requested action aborted: local error in processing.")
-            self._log(f"스캔 수신 오류: {e}")
+            self._log(f"FTP 스캔 수신 오류: {e}")
         finally:
             dsock.close()
 
@@ -349,7 +703,6 @@ class BuiltinScanFtpServer:
         self._thread: Optional[threading.Thread] = None
 
     def start(self) -> tuple[bool, int]:
-        """Start listening on `self.port` (or fallback port 21 / 2121) and return (ok, bound_port)."""
         if self._running:
             return True, self.port
 
@@ -405,11 +758,10 @@ def is_port_listening_locally(port: int) -> bool:
         return False
 
 
-def _stop_existing_ftp_agent_on_port(port: int) -> None:
+def _stop_existing_ftp_agent_on_port(port: int, webdav_port: int = DEFAULT_WEBDAV_PORT) -> None:
     """
-    Stop any previously running FTP scan receiver daemon on `port` (and any lingering
-    background `D410-D420-Connect.exe` instances from older Downloads folders) so old folders
-    are unlocked and can be deleted freely.
+    Stop any previously running WebDAV/FTP scan receiver daemon on `port` or `webdav_port`
+    so old folders are unlocked and can be deleted freely.
     """
     sys_name = platform.system().lower()
     cur_pid = os.getpid()
@@ -417,7 +769,7 @@ def _stop_existing_ftp_agent_on_port(port: int) -> None:
         if sys_name == "windows":
             ps_kill = f"""
 $curPid = {cur_pid}
-Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue |
+Get-NetTCPConnection -LocalPort {port},{webdav_port} -State Listen -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty OwningProcess -Unique |
     Where-Object {{ $_ -gt 4 -and $_ -ne $curPid }} |
     ForEach-Object {{ Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }}
@@ -433,7 +785,11 @@ Get-Process -Name 'D410-D420-Connect' -ErrorAction SilentlyContinue |
             )
         else:
             subprocess.run(
-                ["/bin/sh", "-c", f"lsof -ti tcp:{port} | grep -v ^{cur_pid}$ | xargs kill -9 2>/dev/null || true"],
+                [
+                    "/bin/sh",
+                    "-c",
+                    f"lsof -ti tcp:{port} -ti tcp:{webdav_port} | grep -v ^{cur_pid}$ | xargs kill -9 2>/dev/null || true",
+                ],
                 capture_output=True,
                 timeout=4,
             )
@@ -456,8 +812,9 @@ def _get_appdata_dir() -> Path:
 def save_scan_profile(
     mfp_ip: str,
     scan_name: str,
-    port: int = DEFAULT_FTP_PORT,
+    port: int = DEFAULT_WEBDAV_PORT,
     admin_password: str = "",
+    protocol: str = "WEBDAV",
 ) -> None:
     """Persist scan registration profile so the background daemon can auto-update the MFP if this PC's DHCP IP changes."""
     try:
@@ -466,6 +823,7 @@ def save_scan_profile(
             "mfp_ip": mfp_ip.strip(),
             "scan_name": scan_name.strip(),
             "port": int(port),
+            "protocol": protocol.upper(),
             "admin_password": admin_password,
         }
         profile_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -506,6 +864,7 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
     """
     If this PC's local IPv4 address changed (e.g. after reboot or DHCP renewal),
     verify `/wcd/abbr.xml` on the D410/D420 MFP and automatically update `<Address>` to the new IP.
+    Supports both WebDAV (`PSL_C_A_DAV_PTR`) and FTP (`PSL_C_A_FTP_PTR`).
     """
     profile_path = _get_appdata_dir() / "scan_profile.json"
     if not profile_path.exists():
@@ -515,7 +874,9 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
         profile = json.loads(profile_path.read_text(encoding="utf-8"))
         mfp_ip = str(profile.get("mfp_ip") or "").strip()
         scan_name = str(profile.get("scan_name") or "").strip()
-        port = int(profile.get("port") or DEFAULT_FTP_PORT)
+        protocol = str(profile.get("protocol") or "WEBDAV").upper()
+        is_webdav = "DAV" in protocol
+        port = int(profile.get("port") or (DEFAULT_WEBDAV_PORT if is_webdav else DEFAULT_FTP_PORT))
         admin_password = str(profile.get("admin_password") or "")
         if not mfp_ip or not scan_name:
             return last_checked_ip
@@ -558,11 +919,19 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
             block = m.group(1)
             nm = re.search(r"<Name>([^<]+)</Name>", block)
             no = re.search(r"<AbbrNo>(\d+)</AbbrNo>", block)
-            addr = re.search(r"<Address>([^<]+)</Address>", block)
+            addr = re.search(r"<(?:Address|Host)>([^<]+)</(?:Address|Host)>", block)
             pno = re.search(r"<PortNo>(\d+)</PortNo>", block)
+            smode = re.search(r"<SendMode>([^<]+)</SendMode>", block)
             if nm and no and nm.group(1).strip().lower() == scan_name.lower():
                 existing_no = no.group(1).strip()
-                if addr and addr.group(1).strip() == current_ip and (not pno or int(pno.group(1)) == port):
+                expected_mode = "webdav" if is_webdav else "ftp"
+                mode_matches = (not smode) or (smode.group(1).strip().lower() == expected_mode)
+                if (
+                    addr
+                    and addr.group(1).strip() == current_ip
+                    and (not pno or int(pno.group(1)) == port)
+                    and mode_matches
+                ):
                     return current_ip
                 break
 
@@ -574,8 +943,9 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
             opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
             opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read()
 
+        send_mode_str = "WebDav" if is_webdav else "Ftp"
         new_payload = urllib.parse.urlencode(
-            {"func": "PSL_C_ABR_NEW", "H_NEW": "new", "S_SMO": "Ftp", "H_AKI": "Public", "H_FAV": ""}
+            {"func": "PSL_C_ABR_NEW", "H_NEW": "new", "S_SMO": send_mode_str, "H_AKI": "Public", "H_FAV": ""}
         ).encode("utf-8")
         opener.open(f"{base_url}/wcd/scan.cgi", data=new_payload, timeout=4.0).read()
         try:
@@ -583,27 +953,55 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
         except Exception:
             pass
 
-        form_fields = {
-            "func": "PSL_C_A_FTP_PTR",
-            "H_NUM": "new",
-            "H_AKI": "Public",
-            "H_FAV": "",
-            "R_NUM_": "Space",
-            "T_NAM": scan_name,
-            "C_LANG": "Other",
-            "T_FURI": scan_name,
-            "S_SER": _search_key_for_name(scan_name),
-            "C_WEL": "WellUse",
-            "T_HOS": current_ip,
-            "T_DIR": ".",
-            "T_LOG": DEFAULT_FTP_USER,
-            "P_PAS": DEFAULT_FTP_PASS,
-            "S_ANO": "false",
-            "S_PAS": "true",
-            "S_PRX": "false",
-            "T_POR": str(port),
-            "R_REF": "Level",
-        }
+        if is_webdav:
+            form_fields = {
+                "func": "PSL_C_A_DAV_PTR",
+                "H_NUM": "new",
+                "H_AKI": "Public",
+                "H_FAV": "",
+                "H_Kind": "WebDav",
+                "B_Name": "",
+                "B_Dest": "",
+                "R_NUM_": "Space",
+                "T_NAM": scan_name,
+                "H_Result": "SendOk",
+                "C_LANG": "Other",
+                "T_FURI": "",
+                "S_SER": _search_key_for_name(scan_name),
+                "C_WEL": "on",
+                "T_HOS": current_ip,
+                "T_DIR": "/",
+                "T_LOG": DEFAULT_FTP_USER,
+                "P_PAS": DEFAULT_FTP_PASS,
+                "T_POR": str(port),
+                "S_SSL": "Off",
+                "S_PRX": "Off",
+                "H_PEX": "false",
+                "R_REF": "Level",
+                "S_LEV": "0",
+            }
+        else:
+            form_fields = {
+                "func": "PSL_C_A_FTP_PTR",
+                "H_NUM": "new",
+                "H_AKI": "Public",
+                "H_FAV": "",
+                "R_NUM_": "Space",
+                "T_NAM": scan_name,
+                "C_LANG": "Other",
+                "T_FURI": scan_name,
+                "S_SER": _search_key_for_name(scan_name),
+                "C_WEL": "WellUse",
+                "T_HOS": current_ip,
+                "T_DIR": ".",
+                "T_LOG": DEFAULT_FTP_USER,
+                "P_PAS": DEFAULT_FTP_PASS,
+                "S_ANO": "false",
+                "S_PAS": "true",
+                "S_PRX": "false",
+                "T_POR": str(port),
+                "R_REF": "Level",
+            }
         opener.open(f"{base_url}/wcd/scan.cgi", data=urllib.parse.urlencode(form_fields).encode("utf-8"), timeout=5.0).read()
         return current_ip
     except Exception:
@@ -624,7 +1022,7 @@ def start_auto_ip_sync_daemon() -> None:
 
 def _stage_daemon_to_appdata() -> tuple[str, Optional[Path], Path]:
     """
-    Copy the background FTP daemon into a permanent AppData directory
+    Copy the background WebDAV/FTP daemon into a permanent AppData directory
     (`%LOCALAPPDATA%/SindohD410Connect` on Windows, `~/Library/Application Support/SindohD410Connect` on macOS)
     so the user can freely delete the downloaded installer folder in `Downloads` without Windows locking it
     or breaking scan reception after reboot.
@@ -670,8 +1068,6 @@ def _stage_daemon_to_appdata() -> tuple[str, Optional[Path], Path]:
         if pyw.exists():
             py_exe = str(pyw)
     elif sys_name == "darwin":
-        # Since ftp_scan_server.py uses 100% pure Python stdlib (no Tkinter/pip needed),
-        # prefer a persistent system Python for the LaunchAgent so deleting the installer folder never breaks reboot auto-start.
         for sys_py in (
             "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
             "/opt/homebrew/bin/python3",
@@ -688,22 +1084,26 @@ def _stage_daemon_to_appdata() -> tuple[str, Optional[Path], Path]:
 def ensure_background_ftp_agent(
     scan_dir: Optional[Path] = None,
     port: int = DEFAULT_FTP_PORT,
+    webdav_port: int = DEFAULT_WEBDAV_PORT,
     log_cb: Optional[Callable[[str], None]] = None,
-) -> tuple[bool, int]:
+) -> tuple[bool, int, int]:
     """
-    Ensure the detached background FTP scan receiver daemon is running on this PC/Mac,
+    Ensure the detached background WebDAV + FTP scan receiver daemon is running on this PC/Mac,
     and register it for auto-start on login so scans keep arriving even after closing the installer UI.
-    Also opens Windows Firewall for the FTP control + passive ports.
+    Also opens Windows Firewall for WebDAV (`50080`) and FTP (`2121`, `52100-52130`) restricted to `LocalSubnet`.
+    Returns `(ok, active_webdav_port, active_ftp_port)`.
     """
     target_dir = (scan_dir or get_default_scan_dir()).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
     sys_name = platform.system().lower()
 
-    # 1. Open Windows Firewall rules for FTP port & passive range
+    # 1. Open Windows Firewall rules for WebDAV & FTP ports (Profile Any + RemoteAddress LocalSubnet for security)
     if sys_name == "windows":
         try:
             ps_fw = f"""
-New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Direction Inbound -Protocol TCP -LocalPort {port},{PASV_PORT_MIN}-{PASV_PORT_MAX} -Action Allow -ErrorAction SilentlyContinue | Out-Null
+Remove-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (WebDAV/FTP)' -ErrorAction SilentlyContinue
+New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (WebDAV/FTP)' -Direction Inbound -Protocol TCP -LocalPort {webdav_port},{port},{PASV_PORT_MIN}-{PASV_PORT_MAX} -Profile Any -RemoteAddress LocalSubnet -Action Allow -ErrorAction SilentlyContinue | Out-Null
 """
             subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_fw],
@@ -714,26 +1114,39 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
             pass
 
     # 2. Always stop any previous daemon instances so old Downloads folders are unlocked and new target_dir applies
-    _stop_existing_ftp_agent_on_port(port)
-    import time
+    _stop_existing_ftp_agent_on_port(port, webdav_port)
     for _ in range(10):
-        if not is_port_listening_locally(port):
+        if not is_port_listening_locally(webdav_port) and not is_port_listening_locally(port):
             break
         time.sleep(0.1)
 
     # 3. Stage daemon into AppData & spawn detached background process with cwd=AppData
     py_exe, staged_script, daemon_cwd = _stage_daemon_to_appdata()
     if staged_script is None:
-        cmd = [py_exe, "--daemon", "--port", str(port), "--dir", str(target_dir)]
-        reg_cmd_str = f'"{py_exe}" --daemon --port {port} --dir "{target_dir}"'
+        cmd = [py_exe, "--daemon", "--webdav-port", str(webdav_port), "--port", str(port), "--dir", str(target_dir)]
+        reg_cmd_str = f'"{py_exe}" --daemon --webdav-port {webdav_port} --port {port} --dir "{target_dir}"'
     else:
-        cmd = [py_exe, str(staged_script), "--daemon", "--port", str(port), "--dir", str(target_dir)]
-        reg_cmd_str = f'"{py_exe}" "{staged_script}" --daemon --port {port} --dir "{target_dir}"'
+        cmd = [
+            py_exe,
+            str(staged_script),
+            "--daemon",
+            "--webdav-port",
+            str(webdav_port),
+            "--port",
+            str(port),
+            "--dir",
+            str(target_dir),
+        ]
+        reg_cmd_str = (
+            f'"{py_exe}" "{staged_script}" --daemon --webdav-port {webdav_port} --port {port} --dir "{target_dir}"'
+        )
     try:
         if sys_name == "windows":
-            # Create a windowless VBScript launcher with __COMPAT_LAYER=RunAsInvoker so Windows HKCU\...\Run
-            # starts the daemon silently on every reboot/login even when the .exe has a --uac-admin manifest.
-            vbs_path = daemon_cwd.parent / "start_scan_daemon.vbs" if daemon_cwd.name == "agent" else daemon_cwd / "start_scan_daemon.vbs"
+            vbs_path = (
+                daemon_cwd.parent / "start_scan_daemon.vbs"
+                if daemon_cwd.name == "agent"
+                else daemon_cwd / "start_scan_daemon.vbs"
+            )
             vbs_cmd = reg_cmd_str.replace('"', '""')
             vbs_content = (
                 'Set sh = CreateObject("WScript.Shell")\r\n'
@@ -754,7 +1167,6 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
             ) | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
             subprocess.Popen(cmd, cwd=str(daemon_cwd), env=env_copy, creationflags=flags, close_fds=True)
 
-            # Register in HKCU Run AND Windows Task Scheduler (ONLOGON) so it starts automatically on every reboot
             run_entry = f'wscript.exe //B //NoLogo "{vbs_path}"' if vbs_path.exists() else reg_cmd_str
             try:
                 import winreg
@@ -787,7 +1199,6 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
             except Exception:
                 pass
         else:
-            # macOS / Linux detached daemon + LaunchAgent plist on macOS
             subprocess.Popen(
                 cmd,
                 cwd=str(daemon_cwd),
@@ -796,20 +1207,27 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
                 stderr=subprocess.DEVNULL,
             )
             if sys_name == "darwin":
-                _register_macos_launch_agent(py_exe, staged_script or Path(__file__).resolve(), port, target_dir)
+                _register_macos_launch_agent(
+                    py_exe, staged_script or Path(__file__).resolve(), webdav_port, port, target_dir
+                )
 
         if log_cb:
-            log_cb(f"내장 FTP 스캔 수신 에이전트 시작 완료 (포트: {port}, 폴더: {target_dir})")
-        return True, port
+            log_cb(f"내장 WebDAV 스캔 수신 에이전트 시작 완료 (포트: {webdav_port}, 폴더: {target_dir})")
+        return True, webdav_port, port
     except Exception as e:
         if log_cb:
             log_cb(f"백그라운드 에이전트 실행 경고 (인앱 서버로 전환): {e}")
-        srv = BuiltinScanFtpServer(root_dir=target_dir, port=port, log_cb=log_cb)
-        return srv.start()
+        dav_srv = BuiltinScanWebDavServer(root_dir=target_dir, port=webdav_port, log_cb=log_cb)
+        ok_d, b_dav = dav_srv.start()
+        ftp_srv = BuiltinScanFtpServer(root_dir=target_dir, port=port, log_cb=log_cb)
+        _, b_ftp = ftp_srv.start()
+        return ok_d, b_dav, b_ftp
 
 
-def _register_macos_launch_agent(py_exe: str, script_path: Path, port: int, target_dir: Path) -> None:
-    """Create `~/Library/LaunchAgents/com.sindoh.d410scan.plist` so macOS runs the FTP scan receiver automatically."""
+def _register_macos_launch_agent(
+    py_exe: str, script_path: Path, webdav_port: int, ftp_port: int, target_dir: Path
+) -> None:
+    """Create `~/Library/LaunchAgents/com.sindoh.d410scan.plist` so macOS runs the WebDAV/FTP scan receiver automatically."""
     try:
         agents_dir = Path.home() / "Library" / "LaunchAgents"
         agents_dir.mkdir(parents=True, exist_ok=True)
@@ -825,8 +1243,10 @@ def _register_macos_launch_agent(py_exe: str, script_path: Path, port: int, targ
         <string>{py_exe}</string>
         <string>{script_path}</string>
         <string>--daemon</string>
+        <string>--webdav-port</string>
+        <string>{webdav_port}</string>
         <string>--port</string>
-        <string>{port}</string>
+        <string>{ftp_port}</string>
         <string>--dir</string>
         <string>{target_dir}</string>
     </array>
@@ -838,20 +1258,28 @@ def _register_macos_launch_agent(py_exe: str, script_path: Path, port: int, targ
 </plist>
 """
         plist_path.write_text(plist_content, encoding="utf-8")
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+        subprocess.run(["launchctl", "load", "-w", str(plist_path)], capture_output=True)
     except Exception:
         pass
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sindoh D410/D420 Built-in FTP Scan Receiver Daemon")
+    parser = argparse.ArgumentParser(description="Sindoh D410/D420 Built-in WebDAV & FTP Scan Receiver Daemon")
     parser.add_argument("--daemon", action="store_true", help="Run continuously in background")
+    parser.add_argument("--webdav-port", type=int, default=DEFAULT_WEBDAV_PORT)
     parser.add_argument("--port", type=int, default=DEFAULT_FTP_PORT)
     parser.add_argument("--dir", type=str, default=str(get_default_scan_dir()))
     args = parser.parse_args()
 
-    server = BuiltinScanFtpServer(root_dir=Path(args.dir), port=args.port)
-    ok, bound_port = server.start()
-    if ok:
+    scan_root = Path(args.dir)
+    dav_server = BuiltinScanWebDavServer(root_dir=scan_root, port=args.webdav_port)
+    ok_dav, _ = dav_server.start()
+
+    ftp_server = BuiltinScanFtpServer(root_dir=scan_root, port=args.port)
+    ok_ftp, _ = ftp_server.start()
+
+    if ok_dav or ok_ftp:
         start_auto_ip_sync_daemon()
         while True:
             time.sleep(3600)

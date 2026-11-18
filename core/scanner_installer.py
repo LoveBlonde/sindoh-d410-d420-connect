@@ -1,11 +1,11 @@
 """
 Cross-platform Scanner Setup & MFP Address Book Registration for D410 / D410s / D420.
 Supports:
-  1. Built-in FTP Scan Receiver (`FTP_BUILTIN`, Default, just like Sindoh Connect!):
-     - Starts a lightweight local FTP receiver daemon on port 2121 (no Windows/macOS SMB folder sharing or PC account password required!)
-     - Registers the PC's IP, port 2121, and generated FTP credentials directly into the D410s/D420 Web Connection (`/wcd/scan.cgi`)
-  2. Traditional SMB Shared Folder (`SMB`) or external FTP (`FTP`) registration
-  3. Optional silent TWAIN driver installation (`Setup.exe /S`) & target IP mapping on Windows
+  1. Built-in WebDAV Scan Receiver (`WEBDAV_BUILTIN`, Default, matching Sindoh Connect!):
+     - Starts a lightweight local WebDAV HTTP receiver daemon on port 50080 (single port, no passive port range, no SMB sharing needed!)
+     - Registers the PC's IP, port 50080, path `/`, and WebDAV credentials directly into the D410s/D420 Web Connection (`/wcd/scan.cgi`, `func=PSL_C_A_DAV_PTR`)
+  2. Built-in FTP Scan Receiver (`FTP_BUILTIN`, port 2121, `func=PSL_C_A_FTP_PTR`)
+  3. Traditional SMB Shared Folder (`SMB`) registration
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from core.ftp_scan_server import (
     DEFAULT_FTP_PASS,
     DEFAULT_FTP_PORT,
     DEFAULT_FTP_USER,
+    DEFAULT_WEBDAV_PORT,
     ensure_background_ftp_agent,
     get_default_scan_dir,
     save_scan_profile,
@@ -136,11 +137,11 @@ def register_km_wcd_address_book(
     mfp_ip: str,
     scan_name: str,
     client_ip: str,
-    protocol: str = "FTP",  # "FTP" or "SMB"
-    folder_name: str = ".",
+    protocol: str = "WEBDAV",  # "WEBDAV", "FTP", or "SMB"
+    folder_name: str = "/",
     username: str = DEFAULT_FTP_USER,
     password: str = DEFAULT_FTP_PASS,
-    port: int = DEFAULT_FTP_PORT,
+    port: int = DEFAULT_WEBDAV_PORT,
     admin_password: str = "",
     log_cb: Optional[Callable[[str], None]] = None,
 ) -> tuple[bool, str]:
@@ -149,8 +150,8 @@ def register_km_wcd_address_book(
     Web Connection:
       1. Establish session via `/wcd/index.html` -> `/wcd/system_device.xml` -> `/wcd/abbr.xml`
       2. Remove existing address book entry with the same name (if any) to prevent duplicates
-      3. Enter New Registration state via `POST /wcd/scan.cgi` (`func=PSL_C_ABR_NEW`, `S_SMO=Ftp|Smb`)
-      4. Submit destination via `POST /wcd/scan.cgi` (`func=PSL_C_A_FTP_PTR` or `PSL_C_A_SMB_PTR`)
+      3. Enter New Registration state via `POST /wcd/scan.cgi` (`func=PSL_C_ABR_NEW`, `S_SMO=WebDav|Ftp|Smb`)
+      4. Submit destination via `POST /wcd/scan.cgi` (`func=PSL_C_A_DAV_PTR`, `PSL_C_A_FTP_PTR`, or `PSL_C_A_SMB_PTR`)
       5. Verify in `/wcd/abbr.xml` that `<Name>{scan_name}</Name>` is registered
     """
     def log(msg: str) -> None:
@@ -200,11 +201,15 @@ def register_km_wcd_address_book(
             except Exception:
                 pass
 
-        # 2. Read /wcd/abbr.xml and check if an entry with `scan_name` already exists
+        # 2. Read /wcd/abbr.xml and check if an entry with `scan_name` already exists (+ extract h_token if present)
         abbr_xml = ""
+        token = ""
         try:
             with opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5) as resp:
                 abbr_xml = resp.read().decode("utf-8", errors="ignore")
+                tm = re.search(r"<Token>([^<]+)</Token>", abbr_xml)
+                if tm:
+                    token = tm.group(1).strip()
         except Exception:
             pass
 
@@ -222,13 +227,22 @@ def register_km_wcd_address_book(
                 ).encode("utf-8")
                 try:
                     opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
-                    opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read()
+                    abbr_xml = opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read().decode("utf-8", errors="ignore")
                 except Exception:
                     pass
 
         # 3. Enter "New Registration" state (`PSL_C_ABR_NEW`) and load `/wcd/abbr_edit.xml`
-        is_ftp = protocol.upper().startswith("FTP")
-        send_mode = "Ftp" if is_ftp else "Smb"
+        proto_upper = protocol.upper()
+        is_webdav = "DAV" in proto_upper
+        is_ftp = not is_webdav and proto_upper.startswith("FTP")
+
+        if is_webdav:
+            send_mode = "WebDav"
+        elif is_ftp:
+            send_mode = "Ftp"
+        else:
+            send_mode = "Smb"
+
         new_payload = urllib.parse.urlencode(
             {
                 "func": "PSL_C_ABR_NEW",
@@ -240,22 +254,58 @@ def register_km_wcd_address_book(
         ).encode("utf-8")
         opener.open(f"{base_url}/wcd/scan.cgi", data=new_payload, timeout=4.0).read()
         try:
-            opener.open(f"{base_url}/wcd/abbr_edit.xml", timeout=3.5).read()
+            edit_xml = opener.open(f"{base_url}/wcd/abbr_edit.xml", timeout=3.5).read().decode("utf-8", errors="ignore")
+            tm2 = re.search(r"<Token>([^<]+)</Token>", edit_xml)
+            if tm2:
+                token = tm2.group(1).strip()
         except Exception:
             pass
 
-        # 4. Submit Address Book registration (`PSL_C_A_FTP_PTR` or `PSL_C_A_SMB_PTR`)
+        # 4. Submit Address Book registration (`PSL_C_A_DAV_PTR`, `PSL_C_A_FTP_PTR`, or `PSL_C_A_SMB_PTR`)
         search_key = _get_search_key_for_name(scan_name)
-        clean_dir = "." if (is_ftp and folder_name in ("", "/")) else (folder_name or ".")
 
-        if is_ftp:
+        if is_webdav:
+            # Exact parameter structure matching SindohConnect.Mfp.Core's PSL_C_A_DAV_PTR implementation
+            dav_dir = folder_name if folder_name else "/"
+            form_fields = {
+                "func": "PSL_C_A_DAV_PTR",
+                "H_NUM": "new",
+                "H_AKI": "Public",
+                "H_FAV": "",
+                "H_Kind": "WebDav",
+                "B_Name": "",
+                "B_Dest": "",
+                "R_NUM_": "Space",
+                "T_NAM": scan_name,
+                "H_Result": "SendOk",
+                "C_LANG": "Other",
+                "T_FURI": "",
+                "S_SER": search_key,
+                "C_WEL": "on",
+                "T_HOS": client_ip,
+                "T_DIR": dav_dir,
+                "T_LOG": username or DEFAULT_FTP_USER,
+                "P_PAS": password,
+                "T_POR": str(port),
+                "S_SSL": "Off",
+                "S_PRX": "Off",
+                "H_PEX": "false",
+                "R_REF": "Level",
+                "S_LEV": "0",
+            }
+        elif is_ftp:
+            clean_dir = "." if folder_name in ("", "/") else (folder_name or ".")
             form_fields = {
                 "func": "PSL_C_A_FTP_PTR",
                 "H_NUM": "new",
                 "H_AKI": "Public",
                 "H_FAV": "",
+                "H_Kind": "Ftp",
+                "B_Name": "",
+                "B_Dest": "",
                 "R_NUM_": "Space",
                 "T_NAM": scan_name,
+                "H_Result": "SendOk",
                 "C_LANG": "Other",
                 "T_FURI": scan_name,
                 "S_SER": search_key,
@@ -267,8 +317,10 @@ def register_km_wcd_address_book(
                 "S_ANO": "false" if username else "true",
                 "S_PAS": "true",
                 "S_PRX": "false",
+                "H_PEX": "false",
                 "T_POR": str(port),
                 "R_REF": "Level",
+                "S_LEV": "0",
             }
         else:
             form_fields = {
@@ -289,8 +341,12 @@ def register_km_wcd_address_book(
                 "R_REF": "Level",
             }
 
+        if token:
+            form_fields["h_token"] = token
+
         encoded = urllib.parse.urlencode(form_fields).encode("utf-8")
-        log(f"복합기 웹 컨트롤러({base_url}/wcd/scan.cgi)에 [{scan_name}] ({client_ip}:{port}) 주소록 자동 등록 중...")
+        mode_label = "WebDAV" if is_webdav else ("FTP" if is_ftp else "SMB")
+        log(f"복합기 웹 컨트롤러({base_url}/wcd/scan.cgi)에 {mode_label} 주소록 [{scan_name}] ({client_ip}:{port}) 등록 중...")
         with opener.open(f"{base_url}/wcd/scan.cgi", data=encoded, timeout=5.0) as resp:
             result_xml = resp.read().decode("utf-8", errors="ignore")
 
@@ -303,7 +359,7 @@ def register_km_wcd_address_book(
             pass
 
         if f"<Name>{scan_name}</Name>" in verify_xml or "DeviceExportExec" in result_xml or "wait.xsl" in result_xml:
-            return True, f"복합기 주소록(즐겨찾기 포함)에 '{scan_name}' ({client_ip}:{port}) 원터치 스캔 버튼이 등록되었습니다."
+            return True, f"복합기 주소록(즐겨찾기 포함)에 {mode_label} '{scan_name}' ({client_ip}:{port}) 원터치 스캔 버튼이 등록되었습니다."
         return False, f"복합기 주소록 등록 응답 확인 필요: {result_xml[:160]}"
     except Exception as e:
         return False, f"복합기 웹 주소록 자동 등록 오류 ({e})"
@@ -370,21 +426,25 @@ def install_twain_driver_if_present(
 def configure_scanner_cross_platform(
     mfp_ip: str,
     scan_name: str,
-    protocol: str = "FTP_BUILTIN",  # "FTP_BUILTIN" (default) or "SMB"
+    protocol: str = "WEBDAV_BUILTIN",  # "WEBDAV_BUILTIN" (default), "FTP_BUILTIN", or "SMB"
     pc_username: str = "",
     pc_password: str = "",
     mfp_admin_password: str = "",
     ftp_port: int = DEFAULT_FTP_PORT,
+    webdav_port: int = DEFAULT_WEBDAV_PORT,
     log_cb: Optional[Callable[[str], None]] = None,
     dry_run: bool = False,
 ) -> ScanSetupResult:
     """
     Complete cross-platform scan setup:
-    1. Creates `~/Downloads/sindohScan`
-    2. When `protocol == "FTP_BUILTIN"` (Default, just like Sindoh Connect):
-       - Starts the zero-config Built-in FTP Scan Receiver Daemon (no OS folder sharing or Windows/Mac account needed!)
-       - Registers the FTP shortcut button (`PSL_C_A_FTP_PTR`) on the D410s/D420 MFP Web Connection
-    3. When `protocol == "SMB"`:
+    1. Creates `Desktop/sindohScan`
+    2. When `protocol` is WebDAV (Default, matching Sindoh Connect):
+       - Starts the zero-config Built-in WebDAV + FTP Scan Receiver Daemon (port 50080)
+       - Registers the WebDAV shortcut button (`PSL_C_A_DAV_PTR`) on the D410s/D420 MFP Web Connection
+    3. When `protocol` is FTP:
+       - Starts the Built-in WebDAV + FTP Scan Receiver Daemon (port 2121)
+       - Registers the FTP shortcut button (`PSL_C_A_FTP_PTR`) on the MFP
+    4. When `protocol` is SMB:
        - Configures Windows SMB folder share and registers SMB shortcut on the MFP
     """
     def log(msg: str) -> None:
@@ -395,28 +455,72 @@ def configure_scanner_cross_platform(
     client_ip = get_client_ip_for_mfp(mfp_ip)
     log(f"스캔 수신 폴더 준비 완료: {scan_dir} (내 PC IP: {client_ip})")
 
-    is_builtin_ftp = protocol.upper() in ("FTP_BUILTIN", "FTP", "내장 FTP 수신 (권장)")
+    proto_u = protocol.upper()
+    is_builtin_webdav = "DAV" in proto_u
+    is_builtin_ftp = not is_builtin_webdav and "FTP" in proto_u
 
     if dry_run:
-        mode_desc = f"내장 FTP 수신 서버(포트 {ftp_port}, 공유폴더 설정 불필요)" if is_builtin_ftp else "SMB 공유폴더"
+        if is_builtin_webdav:
+            mode_desc = f"내장 WebDAV 수신 서버(포트 {webdav_port}, 신도 원클릭 방식)"
+        elif is_builtin_ftp:
+            mode_desc = f"내장 FTP 수신 서버(포트 {ftp_port})"
+        else:
+            mode_desc = "SMB 공유폴더"
         log(f"[테스트 모드] {mode_desc} 시작 및 복합기({mfp_ip}) 주소록에 '{scan_name}' 등록 시뮬레이션 완료")
         return ScanSetupResult(
             success=True,
-            title="내장 FTP 스캔 수신기 및 주소록 등록 완료 (테스트 모드)",
+            title=f"스캔 수신기 및 주소록 등록 완료 (테스트 모드)",
             detail=f"복합기 스캔 버튼: [{scan_name}] → {scan_dir} ({mode_desc})",
             scan_folder=str(scan_dir),
         )
 
-    if is_builtin_ftp:
-        # 1. Save profile & start built-in background FTP receiver daemon (auto-updates MFP if PC DHCP IP changes!)
-        save_scan_profile(mfp_ip=mfp_ip, scan_name=scan_name, port=ftp_port, admin_password=mfp_admin_password)
-        _, active_port = ensure_background_ftp_agent(scan_dir=scan_dir, port=ftp_port, log_cb=log_cb)
-        save_scan_profile(mfp_ip=mfp_ip, scan_name=scan_name, port=active_port, admin_password=mfp_admin_password)
+    if is_builtin_webdav:
+        # 1. Save profile & start built-in background WebDAV/FTP receiver daemon
+        save_scan_profile(
+            mfp_ip=mfp_ip,
+            scan_name=scan_name,
+            port=webdav_port,
+            admin_password=mfp_admin_password,
+            protocol="WEBDAV",
+        )
+        _, active_dav_port, _ = ensure_background_ftp_agent(
+            scan_dir=scan_dir, port=ftp_port, webdav_port=webdav_port, log_cb=log_cb
+        )
+        save_scan_profile(
+            mfp_ip=mfp_ip,
+            scan_name=scan_name,
+            port=active_dav_port,
+            admin_password=mfp_admin_password,
+            protocol="WEBDAV",
+        )
+        target_proto = "WEBDAV"
+        target_folder = "/"
+        target_user = DEFAULT_FTP_USER
+        target_pass = DEFAULT_FTP_PASS
+        target_port = active_dav_port
+    elif is_builtin_ftp:
+        save_scan_profile(
+            mfp_ip=mfp_ip,
+            scan_name=scan_name,
+            port=ftp_port,
+            admin_password=mfp_admin_password,
+            protocol="FTP",
+        )
+        _, _, active_ftp_port = ensure_background_ftp_agent(
+            scan_dir=scan_dir, port=ftp_port, webdav_port=webdav_port, log_cb=log_cb
+        )
+        save_scan_profile(
+            mfp_ip=mfp_ip,
+            scan_name=scan_name,
+            port=active_ftp_port,
+            admin_password=mfp_admin_password,
+            protocol="FTP",
+        )
         target_proto = "FTP"
         target_folder = "."
         target_user = DEFAULT_FTP_USER
         target_pass = DEFAULT_FTP_PASS
-        target_port = active_port
+        target_port = active_ftp_port
     else:
         # Traditional SMB share mode
         if platform.system().lower() == "windows":
@@ -447,9 +551,12 @@ def configure_scanner_cross_platform(
     )
     log(msg)
 
+    proto_display = "WebDAV" if is_builtin_webdav else ("FTP" if is_builtin_ftp else "SMB")
     return ScanSetupResult(
         success=True,
-        title="내장 FTP 스캔 서버 가동 및 복합기 주소록 연동 완료" if ok else "내장 FTP 스캔 수신 서버 가동 완료",
-        detail=f"스캔 이름: [{scan_name}] | 수신 포트: FTP {target_port} | 저장 폴더: {scan_dir}",
+        title=f"내장 {proto_display} 스캔 서버 가동 및 복합기 주소록 연동 완료"
+        if ok
+        else f"내장 {proto_display} 스캔 수신 서버 가동 완료",
+        detail=f"스캔 이름: [{scan_name}] | 수신 포트: {proto_display} {target_port} | 저장 폴더: {scan_dir}",
         scan_folder=str(scan_dir),
     )

@@ -21,19 +21,25 @@ if "--daemon" in sys.argv:
     import time
     from core.ftp_scan_server import (
         BuiltinScanFtpServer,
+        BuiltinScanWebDavServer,
         DEFAULT_FTP_PORT,
+        DEFAULT_WEBDAV_PORT,
         get_default_scan_dir,
         start_auto_ip_sync_daemon,
     )
 
     _parser = argparse.ArgumentParser(add_help=False)
     _parser.add_argument("--daemon", action="store_true")
+    _parser.add_argument("--webdav-port", type=int, default=DEFAULT_WEBDAV_PORT)
     _parser.add_argument("--port", type=int, default=DEFAULT_FTP_PORT)
     _parser.add_argument("--dir", type=str, default=str(get_default_scan_dir()))
     _args, _ = _parser.parse_known_args()
-    _srv = BuiltinScanFtpServer(root_dir=Path(_args.dir), port=_args.port)
-    _ok, _ = _srv.start()
-    if _ok:
+    _scan_dir = Path(_args.dir)
+    _dav_srv = BuiltinScanWebDavServer(root_dir=_scan_dir, port=_args.webdav_port)
+    _ok_dav, _ = _dav_srv.start()
+    _ftp_srv = BuiltinScanFtpServer(root_dir=_scan_dir, port=_args.port)
+    _ok_ftp, _ = _ftp_srv.start()
+    if _ok_dav or _ok_ftp:
         start_auto_ip_sync_daemon()
         while True:
             time.sleep(3600)
@@ -177,7 +183,7 @@ class D410ConnectApp(ctk.CTk):
         self.printer_name_var = tk.StringVar(value="SINDOH D410/D420 Series")
         self.set_default_printer_var = tk.BooleanVar(value=True)
         self.scan_name_var = tk.StringVar(value=default_user)
-        self.scan_protocol_var = tk.StringVar(value="내장 FTP 수신 (권장)")
+        self.scan_protocol_var = tk.StringVar(value="내장 WebDAV (권장)")
         self.pc_username_var = tk.StringVar(value=default_user)
         self.pc_password_var = tk.StringVar(value="")
         self.mfp_admin_pw_var = tk.StringVar(value="")
@@ -1046,7 +1052,7 @@ class D410ConnectApp(ctk.CTk):
             ).pack(side="left", padx=(0, 6))
             ctk.CTkSegmentedButton(
                 s_row1,
-                values=["내장 FTP 수신 (권장)", "SMB 공유폴더"],
+                values=["내장 WebDAV (권장)", "내장 FTP", "SMB 공유"],
                 variable=self.scan_protocol_var,
                 font=ctk.CTkFont(family=self.font_family, size=12, weight="bold"),
                 selected_color=COLOR_PRIMARY,
@@ -1055,7 +1061,7 @@ class D410ConnectApp(ctk.CTk):
 
             self.ftp_notice_lbl = ctk.CTkLabel(
                 s_card,
-                text="✓ 신도 원터치 방식과 동일하게 내장 FTP 스캔 수신 서버(포트 2121)가 백그라운드에서 자동 작동하므로,\n   별도의 Windows/Mac 공유폴더 설정이나 PC 로그인 비밀번호 입력 없이 바탕화면(Desktop)/sindohScan 으로 스캔됩니다.",
+                text="✓ 신도 원클릭(sindoh Connect)과 동일하게 내장 WebDAV 수신 서버(포트 50080)로 복합기 주소록을 등록합니다.\n   별도의 Windows/Mac 공유폴더 설정이나 PC 암호 입력 없이 바탕화면(Desktop)/sindohScan 으로 즉시 스캔됩니다.",
                 font=ctk.CTkFont(family=self.font_family, size=12),
                 text_color=COLOR_PRIMARY,
                 justify="left",
@@ -1129,7 +1135,16 @@ class D410ConnectApp(ctk.CTk):
         self.ftp_notice_lbl.pack_forget()
         self.smb_auth_row.pack_forget()
         self.s_row3.pack_forget()
-        if "FTP" in value.upper():
+        val_u = value.upper()
+        if "DAV" in val_u:
+            self.ftp_notice_lbl.configure(
+                text="✓ 신도 원클릭(sindoh Connect)과 동일하게 내장 WebDAV 수신 서버(포트 50080)로 복합기 주소록을 등록합니다.\n   별도의 Windows/Mac 공유폴더 설정이나 PC 암호 입력 없이 바탕화면(Desktop)/sindohScan 으로 즉시 스캔됩니다."
+            )
+            self.ftp_notice_lbl.pack(fill="x", padx=18, pady=(6, 4))
+        elif "FTP" in val_u:
+            self.ftp_notice_lbl.configure(
+                text="✓ 내장 FTP 스캔 수신 서버(포트 2121)가 백그라운드에서 자동 작동하므로,\n   별도의 Windows/Mac 공유폴더 설정이나 PC 암호 입력 없이 바탕화면(Desktop)/sindohScan 으로 즉시 스캔됩니다."
+            )
             self.ftp_notice_lbl.pack(fill="x", padx=18, pady=(6, 4))
         else:
             self.smb_auth_row.pack(fill="x", padx=18, pady=4)

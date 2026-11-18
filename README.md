@@ -2,7 +2,7 @@
 
 신도리코 최신 원클릭 통합 설치 프로그램(`sindoh Connect`)의 지원 목록에서 제외된 **SINDOH D410 / D410s / D420 시리즈** 복합기를 네트워크에서 자동으로 탐색하고, **프린터 드라이버(TCP/IP 포트)** 및 **스캔(복합기 패널 주소록 원터치 버튼 + 로컬 수신 폴더)**을 원클릭으로 설치해 주는 오픈소스 크로스 플랫폼 위저드 프로그램입니다.
 
-> **저작권 안내**: 본 저장소는 제조사의 독점 바이너리(DLL, 드라이버 파일 등)를 포함하지 않으며, 100% 자체 작성된 순수 Python 표준 SNMP/HTTP/CUPS/PrintManagement 코드로 동작하므로 퍼블릭(Public) 오픈소스로 안전하게 사용할 수 있습니다.
+> **저작권 안내**: 본 저장소는 제조사의 독점 바이너리(DLL, 드라이버 파일 등)를 포함하지 않으며, 100% 자체 작성된 순수 Python 표준 SNMP/HTTP/WebDAV/CUPS/PrintManagement 코드로 동작하므로 퍼블릭(Public) 오픈소스로 안전하게 사용할 수 있습니다.
 
 ---
 
@@ -11,16 +11,16 @@
 1. **원터치 위저드 GUI (`sindoh Connect` 스타일)**
    - 좌측 설치 단계 사이드바 (`환영합니다` → `설치 유형 선택하기` → `장치 탐색하기` → `설치 구성 요소 선택하기` → `설치 진행하기` → `설치 완료`)
    - 설치 유형 선택: **프린터 및 스캔 모두 설치** / **프린터 드라이버만 설치** / **스캔만 설치**
-   - 설치에 필요한 옵션(프린터 이름, 스캔 버튼 이름, SMB/FTP 전송 방식, PC 계정/암호, 드라이버 폴더 지정)을 메인 화면에서 한눈에 입력 가능
+   - 설치에 필요한 옵션(프린터 이름, 스캔 버튼 이름, WebDAV/FTP/SMB 전송 방식, 드라이버 폴더 지정)을 메인 화면에서 한눈에 입력 가능
 2. **네트워크 복합기 자동 탐색 (SNMPv2c + WCD HTTP 탐색)**
    - 외부 라이브러리 없이 순수 Python UDP 161번 포트(SNMP)와 복합기 웹 컨트롤러(`/wcd/common.xml`, `/wcd/top.xml`)를 스캔하여 `D410`, `D410s`, `D420` 및 호환 기종을 2초 내에 탐색합니다.
    - 서브넷/VLAN이 분리된 환경을 위해 **IP 주소 직접 입력** 기능도 함께 제공합니다.
 3. **Windows & macOS 크로스 플랫폼 지원**
    - **Windows**: `pnputil` + PowerShell `Add-PrinterDriver` / `Add-PrinterPort` / `Add-Printer`로 표준 TCP/IP 포트(`IP_192.168.x.x`)와 드라이버를 자동 등록합니다.
-   - **macOS**: `.pkg` 드라이버 무인 설치(`installer -pkg`) 및 CUPS `lpadmin` 명령어로 `socket://IP:9100` 또는 `ipp://IP/ipp/print` 프린터 큐를 즉시 생성합니다.
-4. **내장 FTP 스캔 수신 서버 (공유폴더 설정 불필요, `sindoh Connect` 방식)**
-   - Windows나 macOS에서 번거롭고 오류가 잦은 SMB 공유폴더/계정 암호 설정을 할 필요 없이, 프로그램 자체에 **초경량 내장 FTP 스캔 수신 서버(`core/ftp_scan_server.py`, 기본 포트 `2121`)**가 탑재되어 있습니다.
-   - 설치 시 백그라운드 스캔 수신 에이전트가 자동 실행 및 시작프로그램(Windows 레지스트리 Run / 작업 스케줄러 / macOS LaunchAgents)에 등록되며, D410s/D420 웹 컨트롤러(`/wcd/scan.cgi`)에 내 PC의 FTP 수신 정보가 원클릭으로 매핑되어 스캔 즉시 바탕화면(`Desktop/sindohScan`) 폴더로 파일이 들어옵니다. (PC 내부 IP가 바뀌어도 백그라운드 에이전트가 자동으로 복합기 주소록 IP를 갱신합니다.)
+   - **macOS**: 무암호/무설치 `IPP Everywhere` (`ipp://IP/ipp/print -m everywhere`) 직결 인쇄 및 `.pkg` / CUPS `lpadmin`을 지원합니다.
+4. **내장 WebDAV / FTP 스캔 수신 서버 (공유폴더 설정 불필요, `sindoh Connect` 방식)**
+   - Windows나 macOS에서 번거롭고 오류가 잦은 SMB 공유폴더/계정 암호 설정을 할 필요 없이, 신도 원클릭(`sindoh Connect`)과 동일하게 **초경량 내장 WebDAV 수신 서버(기본 포트 `50080`, `func=PSL_C_A_DAV_PTR`)** 및 **내장 FTP 수신 서버(포트 `2121`, `func=PSL_C_A_FTP_PTR`)**가 함께 탑재되어 있습니다.
+   - 설치 시 백그라운드 스캔 수신 에이전트가 자동 실행 및 시작프로그램(Windows 레지스트리 Run / 작업 스케줄러 / macOS LaunchAgents)에 등록되며, D410s/D420 웹 컨트롤러(`/wcd/scan.cgi`)에 내 PC의 WebDAV 수신 정보가 원클릭으로 매핑되어 스캔 즉시 바탕화면(`Desktop/sindohScan`) 폴더로 파일이 들어옵니다. (PC 내부 IP가 바뀌어도 백그라운드 에이전트가 15초마다 확인하여 자동으로 복합기 주소록 IP를 갱신합니다.)
 
 ---
 
@@ -33,11 +33,7 @@
    cd sindoh-d410-d420-connect
    ```
 2. **`run_windows.bat`** 파일을 더블클릭합니다. (자동으로 관리자 권한을 요청하고 GUI 창이 실행됩니다.)
-   - 또는 터미널에서 직접 실행:
-     ```powershell
-     pip install -r requirements.txt
-     python main.py
-     ```
+   - 또는 GitHub 저장소의 **Actions** 탭에서 빌드된 **`D410-D420-Connect-Windows`** 실행 파일(`D410-D420-Connect.exe`)을 받아 바로 실행할 수도 있습니다.
 
 ### 2. macOS에서 실행하기
 1. 터미널에서 클론 후 **`run_macos.command`**를 실행하거나 아래 명령어를 입력합니다:
@@ -66,5 +62,5 @@ GitHub Actions(`.github/workflows/build.yml`)가 포함되어 있어 코드를 �
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconfirm --onedir --windowed --name "D410-D420-Connect" --collect-all customtkinter main.py
+pyinstaller --noconfirm --onedir --windowed --uac-admin --name "D410-D420-Connect" --collect-all customtkinter main.py
 ```
