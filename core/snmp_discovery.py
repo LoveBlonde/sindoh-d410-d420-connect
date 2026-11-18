@@ -218,14 +218,15 @@ def _normalize_model_name(raw_text: str) -> tuple[str, bool]:
     and check whether it is a D410 / D410s / D420 / Konica Minolta equivalent.
     """
     upper = raw_text.upper()
-    # Direct regex for Sindoh D410s / D410 / D420 / D400 / N600 / CM207x
+    # Direct regex for Sindoh D410s / D410 / D420 / D400 / N600 / CM207x / 22C-6e
     match = re.search(r"\b(D410S|D410|D420|D400|D450|D460|D470|N600|N610|CM207[0-9]|C224E|C284E)\b", upper)
     if match:
         code = match.group(1)
         if code == "D410S":
             code = "D410s"
-        is_target = code.upper() in ("D410", "D410S", "D420", "CM2070", "CM2071", "C224E", "C284E")
-        return f"SINDOH {code} Series", is_target
+        return f"SINDOH {code} Series", True
+    if "22C-6E" in upper or "28C-6E" in upper:
+        return "SINDOH D410/D420 Series", True
 
     if "SINDOH" in upper or "KONICA" in upper or "MINOLTA" in upper:
         cleaned = re.sub(r"\s+", " ", raw_text).strip()
@@ -321,9 +322,11 @@ def probe_single_ip(ip: str, timeout: float = 0.65) -> Optional[DiscoveredDevice
         # Filter to printers / MFPs
         if any(
             k in combined.upper()
-            for k in ("SINDOH", "D410", "D420", "D400", "KONICA", "MINOLTA", "PRINTER", "MFP", "SERIES", "PCL", "LEXMARK")
+            for k in ("SINDOH", "D410", "D420", "D400", "22C-6E", "KONICA", "MINOLTA", "PRINTER", "MFP", "SERIES", "PCL", "LEXMARK")
         ) or OID_HR_DEVICE_DESCR in snmp_data or OID_PRT_GENERAL_PRINTER_NAME in snmp_data:
-            model_name, is_target = _normalize_model_name(raw_model or sys_descr)
+            model_name, is_target = _normalize_model_name(f"{raw_model} {sys_descr}")
+            if not is_target and raw_model:
+                model_name = raw_model.strip()[:45]
             return DiscoveredDevice(
                 ip=ip,
                 model=model_name,
