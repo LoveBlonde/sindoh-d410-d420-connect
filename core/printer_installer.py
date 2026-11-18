@@ -439,9 +439,9 @@ def install_printer_macos(
             )
 
         pkg_file: Optional[Path] = None
-        ppd_file: Optional[Path] = _find_installed_macos_ppd(printer_name) if not custom_driver_path else None
+        ppd_file: Optional[Path] = None
 
-        # Only download/extract a driver package if the user explicitly specified a custom driver path
+        # Only use/install a custom driver package if the user explicitly specified `custom_driver_path`
         if custom_driver_path:
             src = find_local_driver_source(custom_driver_path)
             if src:
