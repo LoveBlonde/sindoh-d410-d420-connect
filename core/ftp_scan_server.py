@@ -18,6 +18,7 @@ import datetime
 import os
 import platform
 import random
+import shutil
 import socket
 import subprocess
 import sys
@@ -398,30 +399,90 @@ def is_port_listening_locally(port: int) -> bool:
 
 
 def _stop_existing_ftp_agent_on_port(port: int) -> None:
-    """Stop any previously running FTP scan receiver daemon on `port` so the new target directory takes effect."""
+    """
+    Stop any previously running FTP scan receiver daemon on `port` (and any lingering
+    background `D410-D420-Connect.exe` instances from older Downloads folders) so old folders
+    are unlocked and can be deleted freely.
+    """
     sys_name = platform.system().lower()
+    cur_pid = os.getpid()
     try:
         if sys_name == "windows":
-            ps_kill = (
-                f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | "
-                f"Select-Object -ExpandProperty OwningProcess -Unique | "
-                f"Where-Object {{ $_ -gt 4 -and $_ -ne $PID }} | "
-                f"ForEach-Object {{ Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }}"
-            )
+            ps_kill = f"""
+$curPid = {cur_pid}
+Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    Where-Object {{ $_ -gt 4 -and $_ -ne $curPid }} |
+    ForEach-Object {{ Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }}
+Get-Process -Name 'D410-D420-Connect' -ErrorAction SilentlyContinue |
+    Where-Object {{ $_.Id -ne $curPid }} |
+    ForEach-Object {{ Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }}
+"""
             subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_kill],
                 capture_output=True,
-                timeout=5,
+                timeout=6,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         else:
             subprocess.run(
-                ["/bin/sh", "-c", f"lsof -ti tcp:{port} | grep -v ^{os.getpid()}$ | xargs kill -9 2>/dev/null || true"],
+                ["/bin/sh", "-c", f"lsof -ti tcp:{port} | grep -v ^{cur_pid}$ | xargs kill -9 2>/dev/null || true"],
                 capture_output=True,
                 timeout=4,
             )
     except Exception:
         pass
+
+
+def _stage_daemon_to_appdata() -> tuple[str, Optional[Path], Path]:
+    """
+    Copy the background FTP daemon into a permanent AppData directory
+    (`%LOCALAPPDATA%/SindohD410Connect` on Windows, `~/Library/Application Support/SindohD410Connect` on macOS)
+    so the user can freely delete the downloaded installer folder in `Downloads` without Windows locking it
+    or breaking scan reception after reboot.
+    """
+    sys_name = platform.system().lower()
+    is_frozen = getattr(sys, "frozen", False)
+    if sys_name == "windows":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "SindohD410Connect"
+    elif sys_name == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "SindohD410Connect"
+    else:
+        base = Path.home() / ".local" / "share" / "SindohD410Connect"
+
+    base.mkdir(parents=True, exist_ok=True)
+
+    if is_frozen and sys_name == "windows":
+        src_app_dir = Path(sys.executable).resolve().parent
+        dst_app_dir = base / "agent"
+        if src_app_dir != dst_app_dir:
+            try:
+                if dst_app_dir.exists():
+                    shutil.rmtree(dst_app_dir, ignore_errors=True)
+                shutil.copytree(src_app_dir, dst_app_dir, dirs_exist_ok=True)
+                staged_exe = dst_app_dir / Path(sys.executable).name
+                if staged_exe.exists():
+                    return str(staged_exe), None, dst_app_dir
+            except Exception:
+                pass
+        return sys.executable, None, base
+
+    # Script mode: copy ftp_scan_server.py into AppData so it never locks the repo/download directory
+    src_script = Path(__file__).resolve()
+    dst_script = base / "ftp_scan_server.py"
+    try:
+        if src_script != dst_script:
+            shutil.copy2(src_script, dst_script)
+    except Exception:
+        dst_script = src_script
+
+    py_exe = sys.executable
+    if sys_name == "windows" and not is_frozen and py_exe.lower().endswith("python.exe"):
+        pyw = Path(py_exe).with_name("pythonw.exe")
+        if pyw.exists():
+            py_exe = str(pyw)
+
+    return py_exe, dst_script, base
 
 
 def ensure_background_ftp_agent(
@@ -452,36 +513,28 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
         except Exception:
             pass
 
-    # 2. If an older FTP agent is already listening on `port`, restart it so `target_dir` (Desktop/sindohScan) applies
-    if is_port_listening_locally(port):
-        _stop_existing_ftp_agent_on_port(port)
-        import time
-        for _ in range(10):
-            if not is_port_listening_locally(port):
-                break
-            time.sleep(0.1)
+    # 2. Always stop any previous daemon instances so old Downloads folders are unlocked and new target_dir applies
+    _stop_existing_ftp_agent_on_port(port)
+    import time
+    for _ in range(10):
+        if not is_port_listening_locally(port):
+            break
+        time.sleep(0.1)
 
-    # 3. Spawn detached background process running this module as `__main__`
-    script_path = Path(__file__).resolve()
-    py_exe = sys.executable
-    is_frozen = getattr(sys, "frozen", False)
-    if sys_name == "windows" and not is_frozen and py_exe.lower().endswith("python.exe"):
-        pyw = Path(py_exe).with_name("pythonw.exe")
-        if pyw.exists():
-            py_exe = str(pyw)
-
-    if is_frozen:
+    # 3. Stage daemon into AppData & spawn detached background process with cwd=AppData
+    py_exe, staged_script, daemon_cwd = _stage_daemon_to_appdata()
+    if staged_script is None:
         cmd = [py_exe, "--daemon", "--port", str(port), "--dir", str(target_dir)]
         reg_cmd_str = f'"{py_exe}" --daemon --port {port} --dir "{target_dir}"'
     else:
-        cmd = [py_exe, str(script_path), "--daemon", "--port", str(port), "--dir", str(target_dir)]
-        reg_cmd_str = f'"{py_exe}" "{script_path}" --daemon --port {port} --dir "{target_dir}"'
+        cmd = [py_exe, str(staged_script), "--daemon", "--port", str(port), "--dir", str(target_dir)]
+        reg_cmd_str = f'"{py_exe}" "{staged_script}" --daemon --port {port} --dir "{target_dir}"'
     try:
         if sys_name == "windows":
             flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
             ) | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            subprocess.Popen(cmd, creationflags=flags, close_fds=True)
+            subprocess.Popen(cmd, cwd=str(daemon_cwd), creationflags=flags, close_fds=True)
             # Register in HKCU Run so it starts automatically on Windows login
             try:
                 import winreg
@@ -497,9 +550,15 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
                 pass
         else:
             # macOS / Linux detached daemon + LaunchAgent plist on macOS
-            subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                cmd,
+                cwd=str(daemon_cwd),
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             if sys_name == "darwin":
-                _register_macos_launch_agent(py_exe, script_path, port, target_dir)
+                _register_macos_launch_agent(py_exe, staged_script or Path(__file__).resolve(), port, target_dir)
 
         if log_cb:
             log_cb(f"내장 FTP 스캔 수신 에이전트 시작 완료 (포트: {port}, 폴더: {target_dir})")
