@@ -481,6 +481,18 @@ def _stage_daemon_to_appdata() -> tuple[str, Optional[Path], Path]:
         pyw = Path(py_exe).with_name("pythonw.exe")
         if pyw.exists():
             py_exe = str(pyw)
+    elif sys_name == "darwin":
+        # Since ftp_scan_server.py uses 100% pure Python stdlib (no Tkinter/pip needed),
+        # prefer a persistent system Python for the LaunchAgent so deleting the installer folder never breaks reboot auto-start.
+        for sys_py in (
+            "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3",
+        ):
+            if Path(sys_py).exists():
+                py_exe = sys_py
+                break
 
     return py_exe, dst_script, base
 
@@ -531,11 +543,31 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
         reg_cmd_str = f'"{py_exe}" "{staged_script}" --daemon --port {port} --dir "{target_dir}"'
     try:
         if sys_name == "windows":
+            # Create a windowless VBScript launcher with __COMPAT_LAYER=RunAsInvoker so Windows HKCU\...\Run
+            # starts the daemon silently on every reboot/login even when the .exe has a --uac-admin manifest.
+            vbs_path = daemon_cwd.parent / "start_scan_daemon.vbs" if daemon_cwd.name == "agent" else daemon_cwd / "start_scan_daemon.vbs"
+            vbs_cmd = reg_cmd_str.replace('"', '""')
+            vbs_content = (
+                'Set sh = CreateObject("WScript.Shell")\r\n'
+                'Set env = sh.Environment("PROCESS")\r\n'
+                'env("__COMPAT_LAYER") = "RunAsInvoker"\r\n'
+                f'sh.CurrentDirectory = "{daemon_cwd}"\r\n'
+                f'sh.Run "{vbs_cmd}", 0, False\r\n'
+            )
+            try:
+                vbs_path.write_text(vbs_content, encoding="utf-8")
+            except Exception:
+                pass
+
+            env_copy = os.environ.copy()
+            env_copy["__COMPAT_LAYER"] = "RunAsInvoker"
             flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
             ) | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-            subprocess.Popen(cmd, cwd=str(daemon_cwd), creationflags=flags, close_fds=True)
-            # Register in HKCU Run so it starts automatically on Windows login
+            subprocess.Popen(cmd, cwd=str(daemon_cwd), env=env_copy, creationflags=flags, close_fds=True)
+
+            # Register in HKCU Run AND Windows Task Scheduler (ONLOGON) so it starts automatically on every reboot
+            run_entry = f'wscript.exe //B //NoLogo "{vbs_path}"' if vbs_path.exists() else reg_cmd_str
             try:
                 import winreg
 
@@ -545,7 +577,25 @@ New-NetFirewallRule -DisplayName 'Sindoh D410/D420 Scan Receiver (FTP)' -Directi
                     0,
                     winreg.KEY_SET_VALUE,
                 ) as key:
-                    winreg.SetValueEx(key, "SindohD410ScanReceiver", 0, winreg.REG_SZ, reg_cmd_str)
+                    winreg.SetValueEx(key, "SindohD410ScanReceiver", 0, winreg.REG_SZ, run_entry)
+            except Exception:
+                pass
+            try:
+                subprocess.run(
+                    [
+                        "schtasks",
+                        "/Create",
+                        "/TN",
+                        "SindohD410ScanReceiver",
+                        "/TR",
+                        run_entry,
+                        "/SC",
+                        "ONLOGON",
+                        "/F",
+                    ],
+                    capture_output=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
             except Exception:
                 pass
         else:
