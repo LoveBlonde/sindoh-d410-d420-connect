@@ -58,12 +58,36 @@ def get_client_ip_for_mfp(mfp_ip: str) -> str:
         return "127.0.0.1"
 
 
+def _get_search_key_for_name(scan_name: str) -> str:
+    """Return the Konica Minolta / Sindoh WCD SearchKey tab (`Abc`, `Def`, ..., `Other`) for `scan_name`."""
+    if not scan_name:
+        return "Other"
+    ch = scan_name.strip()[0].upper()
+    if ch in "ABC":
+        return "Abc"
+    if ch in "DEF":
+        return "Def"
+    if ch in "GHI":
+        return "Ghi"
+    if ch in "JKL":
+        return "Jkl"
+    if ch in "MNO":
+        return "Mno"
+    if ch in "PQRS":
+        return "Pqrs"
+    if ch in "TUV":
+        return "Tuv"
+    if ch in "WXYZ":
+        return "Wxyz"
+    return "Other"
+
+
 def register_km_wcd_address_book(
     mfp_ip: str,
     scan_name: str,
     client_ip: str,
     protocol: str = "FTP",  # "FTP" or "SMB"
-    folder_name: str = "/",
+    folder_name: str = ".",
     username: str = DEFAULT_FTP_USER,
     password: str = DEFAULT_FTP_PASS,
     port: int = DEFAULT_FTP_PORT,
@@ -72,8 +96,12 @@ def register_km_wcd_address_book(
 ) -> tuple[bool, str]:
     """
     Register a one-touch scan destination on Konica Minolta / Sindoh D410 / D410s / D420
-    Web Connection (`/wcd/index.html` -> `/wcd/ulogin.cgi` -> `/wcd/scan.cgi`)
-    or Sindoh Web Monitor (`/cgi-bin/address_book.cgi`).
+    Web Connection:
+      1. Establish session via `/wcd/index.html` -> `/wcd/system_device.xml` -> `/wcd/abbr.xml`
+      2. Remove existing address book entry with the same name (if any) to prevent duplicates
+      3. Enter New Registration state via `POST /wcd/scan.cgi` (`func=PSL_C_ABR_NEW`, `S_SMO=Ftp|Smb`)
+      4. Submit destination via `POST /wcd/scan.cgi` (`func=PSL_C_A_FTP_PTR` or `PSL_C_A_SMB_PTR`)
+      5. Verify in `/wcd/abbr.xml` that `<Name>{scan_name}</Name>` is registered
     """
     def log(msg: str) -> None:
         if log_cb:
@@ -89,85 +117,146 @@ def register_km_wcd_address_book(
         urllib.request.HTTPSHandler(context=ctx),
     )
     opener.addheaders = [
-        ("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"),
+        ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
         ("Accept-Language", "ko,en-US;q=0.7,en;q=0.3"),
     ]
 
     base_url = f"http://{mfp_ip}"
     try:
-        # 1. Probe /wcd/common.xml or /wcd/top.xml to establish session cookies & check reachability
+        # 1. Establish WCD session cookie via /wcd/index.html & /wcd/system_device.xml
         for scheme in ("http", "https"):
-            test_url = f"{scheme}://{mfp_ip}/wcd/common.xml"
+            test_url = f"{scheme}://{mfp_ip}/wcd/index.html"
             try:
-                with opener.open(test_url, timeout=2.5) as resp:
+                with opener.open(test_url, timeout=3.0) as resp:
                     if resp.status == 200:
+                        resp.read()
                         base_url = f"{scheme}://{mfp_ip}"
                         break
             except Exception:
                 continue
 
-        # 2. Public user or Admin login (/wcd/ulogin.cgi)
-        login_url = f"{base_url}/wcd/ulogin.cgi"
+        try:
+            opener.open(f"{base_url}/wcd/system_device.xml", timeout=3.0).read()
+        except Exception:
+            pass
+
+        # Optional Admin login if admin_password was explicitly provided
         if admin_password:
             login_payload = urllib.parse.urlencode(
                 {"func": "PSL_LP0_LOG", "R_ADM": "Admin", "password": admin_password}
             ).encode("utf-8")
-        else:
-            login_payload = urllib.parse.urlencode(
-                {"func": "PSL_LP0_TOP", "Mode": "PublicUser"}
-            ).encode("utf-8")
+            try:
+                opener.open(f"{base_url}/wcd/ulogin.cgi", data=login_payload, timeout=3.0).read()
+            except Exception:
+                pass
 
+        # 2. Read /wcd/abbr.xml and check if an entry with `scan_name` already exists
+        abbr_xml = ""
         try:
-            opener.open(login_url, data=login_payload, timeout=3.0).read()
+            with opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5) as resp:
+                abbr_xml = resp.read().decode("utf-8", errors="ignore")
         except Exception:
             pass
 
-        # 3. Fetch token from /wcd/abbr.xml if present
-        token = ""
-        try:
-            with opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.0) as resp:
-                xml_body = resp.read().decode("utf-8", errors="ignore")
-                m = re.search(r"<Token>([^<]+)</Token>", xml_body)
-                if m:
-                    token = m.group(1).strip()
-        except Exception:
-            pass
+        for m in re.finditer(r"<Abbr>\s*<AbbrNo>(\d+)</AbbrNo>\s*<Name>([^<]+)</Name>", abbr_xml):
+            existing_no, existing_name = m.group(1).strip(), m.group(2).strip()
+            if existing_name.lower() == scan_name.strip().lower():
+                log(f"기존 동일 이름 주소록 항목([{existing_name}], 번호 #{existing_no}) 갱신을 위해 정리 중...")
+                del_payload = urllib.parse.urlencode(
+                    {
+                        "func": "PSL_C_ABR_DEL",
+                        "C_ABR_H_NUM": existing_no,
+                        "C_ABR_H_AKI": "Public",
+                        "C_ABR_H_FAV": "",
+                    }
+                ).encode("utf-8")
+                try:
+                    opener.open(f"{base_url}/wcd/scan.cgi", data=del_payload, timeout=4.0).read()
+                    opener.open(f"{base_url}/wcd/abbr.xml", timeout=3.5).read()
+                except Exception:
+                    pass
 
-        # 4. Submit Address Book registration to /wcd/scan.cgi
-        # D410 / D420 Web Connection uses PSL_C_A_FTP_PTR (FTP) or PSL_C_A_SMB_PTR (SMB)
+        # 3. Enter "New Registration" state (`PSL_C_ABR_NEW`) and load `/wcd/abbr_edit.xml`
         is_ftp = protocol.upper().startswith("FTP")
-        func_code = "PSL_C_A_FTP_PTR" if is_ftp else "PSL_C_A_SMB_PTR"
-        form_fields = {
-            "func": func_code,
-            "H_NUM": "new",
-            "H_AKI": "Public",
-            "H_FAV": "Yes",
-            "T_NAM": scan_name,
-            "T_FURI": "",
-            "S_LEV": "Other",
-            "C_WEL": "true",
-            "T_HOS": client_ip,
-            "T_DIR": folder_name,
-            "T_LOG": username or DEFAULT_FTP_USER,
-            "P_PAS": password,
-            "T_POR": str(port),
-            "S_ANO": "Off" if username else "On",
-            "S_PAS": "On",
-            "S_PRX": "Off",
-        }
-        if token:
-            form_fields["h_token"] = token
+        send_mode = "Ftp" if is_ftp else "Smb"
+        new_payload = urllib.parse.urlencode(
+            {
+                "func": "PSL_C_ABR_NEW",
+                "H_NEW": "new",
+                "S_SMO": send_mode,
+                "H_AKI": "Public",
+                "H_FAV": "",
+            }
+        ).encode("utf-8")
+        opener.open(f"{base_url}/wcd/scan.cgi", data=new_payload, timeout=4.0).read()
+        try:
+            opener.open(f"{base_url}/wcd/abbr_edit.xml", timeout=3.5).read()
+        except Exception:
+            pass
+
+        # 4. Submit Address Book registration (`PSL_C_A_FTP_PTR` or `PSL_C_A_SMB_PTR`)
+        search_key = _get_search_key_for_name(scan_name)
+        clean_dir = "." if (is_ftp and folder_name in ("", "/")) else (folder_name or ".")
+
+        if is_ftp:
+            form_fields = {
+                "func": "PSL_C_A_FTP_PTR",
+                "H_NUM": "new",
+                "H_AKI": "Public",
+                "H_FAV": "",
+                "R_NUM_": "Space",
+                "T_NAM": scan_name,
+                "C_LANG": "Other",
+                "T_FURI": scan_name,
+                "S_SER": search_key,
+                "C_WEL": "WellUse",
+                "T_HOS": client_ip,
+                "T_DIR": clean_dir,
+                "T_LOG": username or DEFAULT_FTP_USER,
+                "P_PAS": password,
+                "S_ANO": "false" if username else "true",
+                "S_PAS": "true",
+                "S_PRX": "false",
+                "T_POR": str(port),
+                "R_REF": "Level",
+            }
+        else:
+            form_fields = {
+                "func": "PSL_C_A_SMB_PTR",
+                "H_NUM": "new",
+                "H_AKI": "Public",
+                "H_FAV": "",
+                "R_NUM_": "Space",
+                "T_NAM": scan_name,
+                "C_LANG": "Other",
+                "T_FURI": scan_name,
+                "S_SER": search_key,
+                "C_WEL": "WellUse",
+                "T_HOS": client_ip,
+                "T_DIR": folder_name or "sindohScan",
+                "T_LOG": username,
+                "P_PAS": password,
+                "R_REF": "Level",
+            }
 
         encoded = urllib.parse.urlencode(form_fields).encode("utf-8")
         log(f"복합기 웹 컨트롤러({base_url}/wcd/scan.cgi)에 [{scan_name}] ({client_ip}:{port}) 주소록 자동 등록 중...")
-        with opener.open(f"{base_url}/wcd/scan.cgi", data=encoded, timeout=4.0) as resp:
-            result_html = resp.read().decode("utf-8", errors="ignore")
-            if "SendOk" in result_html or "completed" in result_html.lower() or resp.status == 200:
-                return True, f"복합기 주소록에 '{scan_name}' ({client_ip}:{port}) 원터치 스캔 버튼이 등록되었습니다."
-    except Exception as e:
-        return False, f"복합기 웹 주소록 자동 등록 응답 대기 ({e})"
+        with opener.open(f"{base_url}/wcd/scan.cgi", data=encoded, timeout=5.0) as resp:
+            result_xml = resp.read().decode("utf-8", errors="ignore")
 
-    return False, "복합기 웹 응답을 확인할 수 없습니다."
+        # 5. Verify in /wcd/abbr.xml that the new entry exists
+        verify_xml = ""
+        try:
+            with opener.open(f"{base_url}/wcd/abbr.xml", timeout=4.0) as resp:
+                verify_xml = resp.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+
+        if f"<Name>{scan_name}</Name>" in verify_xml or "DeviceExportExec" in result_xml or "wait.xsl" in result_xml:
+            return True, f"복합기 주소록(즐겨찾기 포함)에 '{scan_name}' ({client_ip}:{port}) 원터치 스캔 버튼이 등록되었습니다."
+        return False, f"복합기 주소록 등록 응답 확인 필요: {result_xml[:160]}"
+    except Exception as e:
+        return False, f"복합기 웹 주소록 자동 등록 오류 ({e})"
 
 
 def setup_windows_smb_share(scan_dir: Path, share_name: str = "sindohScan", log_cb: Optional[Callable[[str], None]] = None) -> bool:
@@ -272,7 +361,7 @@ def configure_scanner_cross_platform(
         # 1. Start built-in background FTP receiver daemon (works on both Windows & macOS without sharing folders!)
         _, active_port = ensure_background_ftp_agent(scan_dir=scan_dir, port=ftp_port, log_cb=log_cb)
         target_proto = "FTP"
-        target_folder = "/"
+        target_folder = "."
         target_user = DEFAULT_FTP_USER
         target_pass = DEFAULT_FTP_PASS
         target_port = active_port

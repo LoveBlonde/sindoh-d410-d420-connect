@@ -909,7 +909,7 @@ class D410ConnectApp(ctk.CTk):
             ctk.CTkLabel(
                 row1,
                 text="프린터 표시 이름:",
-                width=140,
+                width=130,
                 font=ctk.CTkFont(family=self.font_family, size=13),
                 text_color=COLOR_TEXT_DARK,
                 anchor="w",
@@ -918,7 +918,7 @@ class D410ConnectApp(ctk.CTk):
                 row1,
                 textvariable=self.printer_name_var,
                 font=ctk.CTkFont(family=self.font_family, size=13),
-                width=300,
+                width=240,
                 height=32,
             ).pack(side="left", padx=(4, 12))
             ctk.CTkCheckBox(
@@ -936,7 +936,7 @@ class D410ConnectApp(ctk.CTk):
             ctk.CTkLabel(
                 row2,
                 text="드라이버 경로 (선택):",
-                width=140,
+                width=130,
                 font=ctk.CTkFont(family=self.font_family, size=13),
                 text_color=COLOR_TEXT_DARK,
                 anchor="w",
@@ -944,9 +944,9 @@ class D410ConnectApp(ctk.CTk):
             ctk.CTkEntry(
                 row2,
                 textvariable=self.custom_driver_path_var,
-                placeholder_text="비워두면 drivers/ 폴더 또는 KM 통합 PCL 드라이버 자동 사용",
+                placeholder_text="비워두면 자동 드라이버 사용",
                 font=ctk.CTkFont(family=self.font_family, size=12),
-                width=310,
+                width=255,
                 height=32,
             ).pack(side="left", padx=(4, 8))
             ctk.CTkButton(
@@ -956,7 +956,7 @@ class D410ConnectApp(ctk.CTk):
                 fg_color="#E5E8EB",
                 hover_color="#D1D6DB",
                 text_color=COLOR_TEXT_DARK,
-                width=110,
+                width=115,
                 height=32,
                 command=self._browse_driver_path,
             ).pack(side="left")
@@ -985,7 +985,7 @@ class D410ConnectApp(ctk.CTk):
             ctk.CTkLabel(
                 s_row1,
                 text="복합기 주소록 이름:",
-                width=140,
+                width=130,
                 font=ctk.CTkFont(family=self.font_family, size=13),
                 text_color=COLOR_TEXT_DARK,
                 anchor="w",
@@ -993,11 +993,11 @@ class D410ConnectApp(ctk.CTk):
             ctk.CTkEntry(
                 s_row1,
                 textvariable=self.scan_name_var,
-                placeholder_text="복합기 스캔 화면에 표시될 내 이름 (예: 홍길동)",
+                placeholder_text="예: 홍길동",
                 font=ctk.CTkFont(family=self.font_family, size=13),
-                width=220,
+                width=145,
                 height=32,
-            ).pack(side="left", padx=(4, 14))
+            ).pack(side="left", padx=(4, 12))
 
             ctk.CTkLabel(
                 s_row1,
@@ -1021,6 +1021,7 @@ class D410ConnectApp(ctk.CTk):
                 text_color=COLOR_PRIMARY,
                 justify="left",
                 anchor="w",
+                wraplength=540,
             )
 
             self.smb_auth_row = ctk.CTkFrame(s_card, fg_color="transparent")
