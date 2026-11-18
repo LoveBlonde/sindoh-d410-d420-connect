@@ -346,6 +346,17 @@ Write-Output "SUCCESS_DRIVER=$chosenDriver"
             shutil.rmtree(extracted_dir, ignore_errors=True)
 
 
+def _find_installed_macos_ppd() -> Optional[Path]:
+    """Check if a Sindoh / Konica Minolta PPD is already installed in `/Library/Printers/PPDs/Contents/Resources`."""
+    ppd_root = Path("/Library/Printers/PPDs/Contents/Resources")
+    if ppd_root.exists():
+        for pat in ("*D410*", "*D420*", "*D450*", "*D470*", "*SINDOH*", "*224e*", "*284e*", "*KONICA*"):
+            matches = sorted(ppd_root.glob(pat))
+            if matches:
+                return matches[0]
+    return None
+
+
 def install_printer_macos(
     ip: str,
     printer_name: str,
@@ -355,7 +366,7 @@ def install_printer_macos(
     dry_run: bool = False,
 ) -> InstallStepResult:
     """
-    Install printer on macOS using `installer -pkg` (if .pkg provided) and CUPS `lpadmin`.
+    Install printer on macOS using `installer -pkg` (if .pkg provided and not yet installed) and CUPS `lpadmin`.
     Supports JetDirect `socket://<ip>:9100` and IPP `ipp://<ip>/ipp/print`.
     """
     def log(msg: str) -> None:
@@ -365,12 +376,17 @@ def install_printer_macos(
     queue_name = re.sub(r"[^A-Za-z0-9_]", "_", printer_name).strip("_") or "SINDOH_D410_D420"
     log(f"[macOS] CUPS 프린터 설치 준비: {printer_name} (Queue: {queue_name}, IP: {ip})")
 
-    src = ensure_driver_package(custom_driver_path, log_cb=log_cb)
     extracted_dir: Optional[Path] = None
 
     try:
         pkg_file: Optional[Path] = None
-        ppd_file: Optional[Path] = None
+        ppd_file: Optional[Path] = _find_installed_macos_ppd() if not custom_driver_path else None
+
+        if ppd_file:
+            log(f"이미 설치된 신도리코 드라이버(PPD) 확인됨: {ppd_file.name}")
+            src = None
+        else:
+            src = ensure_driver_package(custom_driver_path, log_cb=log_cb)
 
         if src:
             if src.is_file() and src.suffix.lower() == ".zip" and zipfile.is_zipfile(src):
@@ -397,21 +413,20 @@ def install_printer_macos(
                 driver_used=ppd_file.name if ppd_file else "macOS Generic PCL/PostScript",
             )
 
-        # Install .pkg if present (prompts macOS native admin password dialog via osascript)
-        if pkg_file:
-            log(f"macOS 패키지 설치 중: {pkg_file.name} (관리자 암호 입력 창이 뜰 수 있습니다)")
-            osa_cmd = f'do shell script "installer -pkg \\"{pkg_file}\\" -target /" with administrator privileges'
+        # Install .pkg only if no PPD is installed yet
+        if pkg_file and not ppd_file:
+            log(f"macOS 프린터 드라이버 패키지 설치 중: {pkg_file.name} (맥 로그인 암호 입력 필요)")
+            osa_cmd = (
+                f'do shell script "installer -pkg \\"{pkg_file}\\" -target /" '
+                f'with prompt "신도리코 프린터 드라이버({pkg_file.name})를 설치하려면 맥 암호를 입력해 주세요." '
+                f'with administrator privileges'
+            )
             subprocess.run(["osascript", "-e", osa_cmd], capture_output=True, text=True)
+            ppd_file = _find_installed_macos_ppd()
 
         # Discover installed Sindoh / Konica Minolta PPD in /Library/Printers/PPDs/Contents/Resources/
         if not ppd_file:
-            ppd_root = Path("/Library/Printers/PPDs/Contents/Resources")
-            if ppd_root.exists():
-                for pat in ("*D410*", "*D420*", "*D470*", "*SINDOH*", "*224e*", "*284e*", "*KONICA*"):
-                    matches = list(ppd_root.glob(pat))
-                    if matches:
-                        ppd_file = matches[0]
-                        break
+            ppd_file = _find_installed_macos_ppd()
 
         # Build lpadmin command
         subprocess.run(["lpadmin", "-x", queue_name], capture_output=True)
