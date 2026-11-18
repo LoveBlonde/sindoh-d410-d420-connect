@@ -111,6 +111,8 @@ from core.printer_installer import (
 )
 from core.scanner_installer import (
     configure_scanner_cross_platform,
+    find_existing_wcd_entry_ip,
+    get_client_ip_for_mfp,
     get_default_scan_folder,
 )
 
@@ -1399,6 +1401,26 @@ class D410ConnectApp(ctk.CTk):
         if self.current_step == 2 and self.selected_device is None:
             messagebox.showwarning("장치 선택 필요", "설치할 복합기를 목록에서 선택하거나 IP 주소를 직접 추가해 주세요.")
             return
+        if self.current_step == 3 and self.install_mode in ("both", "scan") and not self.dry_run_var.get():
+            dev = self.selected_device
+            scan_name = self.scan_name_var.get().strip() or "SindohScan"
+            if dev is not None:
+                existing_ip = find_existing_wcd_entry_ip(
+                    mfp_ip=dev.ip,
+                    scan_name=scan_name,
+                    admin_password=self.mfp_admin_pw_var.get(),
+                )
+                my_ip = get_client_ip_for_mfp(dev.ip)
+                if existing_ip and existing_ip != my_ip:
+                    overwrite = messagebox.askyesno(
+                        "중복된 주소록 이름 확인",
+                        f"복합기({dev.ip})에 이미 '{scan_name}' 이름이 다른 PC({existing_ip})로 등록되어 있습니다.\n\n"
+                        f"현재 PC({my_ip})로 덮어쓰시겠습니까?\n\n"
+                        f"• [예]: 현재 PC({my_ip})로 덮어쓰기\n"
+                        f"• [아니오]: 취소하고 다른 이름 입력하기",
+                    )
+                    if not overwrite:
+                        return
         if self.current_step < 5:
             self._show_step(self.current_step + 1)
 

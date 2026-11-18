@@ -81,6 +81,57 @@ def _get_search_key_for_name(scan_name: str) -> str:
     return "Other"
 
 
+def find_existing_wcd_entry_ip(
+    mfp_ip: str,
+    scan_name: str,
+    admin_password: str = "",
+) -> Optional[str]:
+    """
+    Check if `scan_name` is already registered in `/wcd/abbr.xml` on `mfp_ip`.
+    Returns the registered host/IP address string if found, or `None` if not found.
+    """
+    target = scan_name.strip().lower()
+    if not mfp_ip or not target:
+        return None
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cj),
+        urllib.request.HTTPSHandler(context=ctx),
+    )
+    opener.addheaders = [("User-Agent", "Mozilla/5.0"), ("Accept-Language", "ko,en-US;q=0.7")]
+
+    base_url = f"http://{mfp_ip}"
+    try:
+        opener.open(f"{base_url}/wcd/index.html", timeout=2.0).read()
+        try:
+            opener.open(f"{base_url}/wcd/system_device.xml", timeout=2.0).read()
+        except Exception:
+            pass
+        if admin_password:
+            login_payload = urllib.parse.urlencode(
+                {"func": "PSL_LP0_LOG", "R_ADM": "Admin", "password": admin_password}
+            ).encode("utf-8")
+            try:
+                opener.open(f"{base_url}/wcd/ulogin.cgi", data=login_payload, timeout=2.0).read()
+            except Exception:
+                pass
+
+        abbr_xml = opener.open(f"{base_url}/wcd/abbr.xml", timeout=2.5).read().decode("utf-8", errors="ignore")
+        for m in re.finditer(r"<Abbr>(.*?)</Abbr>", abbr_xml, re.DOTALL):
+            block = m.group(1)
+            nm = re.search(r"<Name>([^<]+)</Name>", block)
+            if nm and nm.group(1).strip().lower() == target:
+                addr = re.search(r"<(?:Address|Host)>([^<]+)</(?:Address|Host)>", block)
+                return addr.group(1).strip() if addr else "알 수 없는 IP"
+    except Exception:
+        pass
+    return None
+
+
 def register_km_wcd_address_book(
     mfp_ip: str,
     scan_name: str,

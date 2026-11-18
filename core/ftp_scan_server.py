@@ -524,9 +524,6 @@ def _sync_mfp_ip_once(last_checked_ip: str) -> str:
         if not current_ip or current_ip.startswith("127."):
             return last_checked_ip
 
-        if current_ip == last_checked_ip:
-            return last_checked_ip
-
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -619,7 +616,7 @@ def start_auto_ip_sync_daemon() -> None:
         last_ip = ""
         while True:
             last_ip = _sync_mfp_ip_once(last_ip)
-            time.sleep(60)
+            time.sleep(15)
 
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
