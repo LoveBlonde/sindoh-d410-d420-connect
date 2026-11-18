@@ -353,15 +353,6 @@ def probe_single_ip(ip: str, timeout: float = 0.28) -> Optional[DiscoveredDevice
                 supports_scan=True,
             )
 
-    # Fallback when SNMP UDP 161 is disabled or dropped (e.g. D450 with SNMP off): check TCP 9100 -> HTTP WCD
-    try:
-        with socket.create_connection((ip, 9100), timeout=0.18):
-            wcd_dev = probe_http_wcd(ip, timeout=0.8)
-            if wcd_dev:
-                return wcd_dev
-    except Exception:
-        pass
-
     return None
 
 
