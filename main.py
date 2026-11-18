@@ -708,18 +708,24 @@ class D410ConnectApp(ctk.CTk):
 
         def progress_cb(done: int, total: int) -> None:
             pct = int((done / max(total, 1)) * 100)
-            self.after(
-                0,
-                lambda: self.scan_status_lbl.configure(
-                    text=f"네트워크 대역에서 장치를 검색하고 있습니다... ({pct}%)"
+            try:
+                self.after(
+                    0,
+                    lambda: self.scan_status_lbl.configure(
+                        text=f"네트워크 대역에서 장치를 검색하고 있습니다... ({pct}%)"
+                    )
+                    if hasattr(self, "scan_status_lbl") and self.scan_status_lbl.winfo_exists()
+                    else None,
                 )
-                if hasattr(self, "scan_status_lbl") and self.scan_status_lbl.winfo_exists()
-                else None,
-            )
+            except Exception:
+                pass
 
         def worker() -> None:
             devs = scan_network(progress_callback=progress_cb, only_d410_d420=False)
-            self.after(0, lambda: self._on_scan_finished(devs))
+            try:
+                self.after(0, lambda: self._on_scan_finished(devs))
+            except Exception:
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
 
