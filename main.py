@@ -70,11 +70,20 @@ def _ensure_runtime_environment() -> None:
         os.environ["SINDOH_BOOTSTRAPPED"] = "1"
         os.execv(str(venv_py), [str(venv_py), str(Path(__file__).resolve()), *sys.argv[1:]])
 
-    # 2. Delegate to run_macos.command on macOS/Linux if available
-    runner_sh = project_dir / "run_macos.command"
-    if not is_win and runner_sh.exists():
-        os.environ["SINDOH_BOOTSTRAPPED"] = "1"
-        os.execv("/bin/bash", ["/bin/bash", str(runner_sh), *sys.argv[1:]])
+    # 2. Delegate to run_macos.command on macOS/Linux or windows_launcher.ps1 on Windows
+    if is_win:
+        ps_launcher = project_dir / "core" / "windows_launcher.ps1"
+        if ps_launcher.exists():
+            os.environ["SINDOH_BOOTSTRAPPED"] = "1"
+            res = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_launcher), *sys.argv[1:]]
+            )
+            raise SystemExit(res.returncode)
+    else:
+        runner_sh = project_dir / "run_macos.command"
+        if runner_sh.exists():
+            os.environ["SINDOH_BOOTSTRAPPED"] = "1"
+            os.execv("/bin/bash", ["/bin/bash", str(runner_sh), *sys.argv[1:]])
 
 
 _ensure_runtime_environment()
