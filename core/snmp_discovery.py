@@ -215,49 +215,64 @@ def get_local_ipv4_addresses() -> List[str]:
 def _normalize_model_name(raw_text: str) -> tuple[str, bool]:
     """
     Parse SNMP description or HTTP XML product name into a clean model string
-    and check whether it is a D410 / D410s / D420 / Konica Minolta equivalent.
+    and check whether it is a Sindoh D3xx / D4xx / D7xx / N6xx / CMxxxx or Konica Minolta equivalent.
     """
-    upper = raw_text.upper()
-    # Direct regex for Sindoh D410s / D410 / D420 / D400 / N600 / CM207x / 22C-6e
-    match = re.search(r"\b(D410S|D410|D420|D400|D450|D460|D470|N600|N610|CM207[0-9]|C224E|C284E)\b", upper)
+    cleaned_raw = raw_text.replace("\ufeff", "").replace("_", " ").strip()
+    upper = cleaned_raw.upper()
+
+    # Match any Sindoh D3xx / D4xx / D7xx / N6xx / CMxxxx / Konica Minolta Cxxx model code
+    match = re.search(
+        r"(D3[0-9]{2}[A-Z]?|D4[0-9]{2}[A-Z]?|D7[0-9]{2}[A-Z]?|N[4567][0-9]{2}[A-Z]?|CM[23456][0-9]{3}|C[23456][0-9]{2}[A-Z]?)",
+        upper,
+    )
     if match:
         code = match.group(1)
-        if code == "D410S":
-            code = "D410s"
+        if code.endswith("S") and len(code) == 5:
+            code = code[:-1] + "s"
         return f"SINDOH {code} Series", True
-    if "22C-6E" in upper or "28C-6E" in upper:
-        return "SINDOH D410/D420 Series", True
+
+    if any(k in upper for k in ("22C-6E", "28C-6E", "22C-7", "28C-7", "36C-7")):
+        return "SINDOH D410/D450 Series", True
 
     if "SINDOH" in upper or "KONICA" in upper or "MINOLTA" in upper:
-        cleaned = re.sub(r"\s+", " ", raw_text).strip()
-        is_target = any(k in upper for k in ("D410", "D420", "224", "284", "CM207"))
+        cleaned = re.sub(r"\s+", " ", cleaned_raw).strip()
+        is_target = any(k in upper for k in ("D3", "D4", "D7", "N6", "224", "284", "227", "287", "CM"))
         return cleaned[:45], is_target
 
-    return raw_text.strip()[:45] or "Network MFP", False
+    return cleaned_raw[:45] or "Network MFP", False
 
 
 def probe_http_wcd(ip: str, timeout: float = 1.2) -> Optional[DiscoveredDevice]:
     """
-    Probe Konica Minolta / Sindoh D410/D420 Web Connection (/wcd/common.xml or /wcd/top.xml)
-    just like SindohConnect.Mfp.Core does.
+    Probe Konica Minolta / Sindoh D410/D420/D450 Web Connection
+    (`/wcd/index.html` -> `/wcd/system_device.xml` or `/wcd/common.xml`).
     """
+    import http.cookiejar
+
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
     for scheme in ("http", "https"):
-        for path in ("/wcd/common.xml", "/wcd/top.xml", "/cgi-bin/home.cgi"):
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(cj),
+            urllib.request.HTTPSHandler(context=ctx),
+        )
+        opener.addheaders = [("User-Agent", "Mozilla/5.0"), ("Accept-Language", "ko,en-US;q=0.7")]
+        try:
+            opener.open(f"{scheme}://{ip}/wcd/index.html", timeout=timeout).read(4096)
+        except Exception:
+            pass
+
+        for path in ("/wcd/system_device.xml", "/wcd/common.xml", "/wcd/top.xml", "/cgi-bin/home.cgi"):
             url = f"{scheme}://{ip}{path}"
             try:
-                req = urllib.request.Request(
-                    url,
-                    headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
-                )
-                with urllib.request.urlopen(req, timeout=timeout, context=ctx if scheme == "https" else None) as resp:
-                    body = resp.read(8192).decode("utf-8", errors="ignore")
-                    if "<ProductName>" in body or "<MFP>" in body or "wcd" in body.lower():
+                with opener.open(url, timeout=timeout) as resp:
+                    body = resp.read(16384).decode("utf-8", errors="ignore").replace("\ufeff", "")
+                    if "<ProductName>" in body or ("<MFP>" in body and "<Function>err</Function>" not in body):
                         m = re.search(r"<ProductName>([^<]+)</ProductName>", body)
-                        prod = m.group(1).strip() if m else "SINDOH D410/D420 Series"
+                        prod = m.group(1).strip() if m else "SINDOH D410/D450 Series"
                         s_m = re.search(r"<SerialNumber>([^<]+)</SerialNumber>", body)
                         serial = s_m.group(1).strip() if s_m else ""
                         model_name, is_target = _normalize_model_name(prod)
@@ -286,8 +301,8 @@ def probe_http_wcd(ip: str, timeout: float = 1.2) -> Optional[DiscoveredDevice]:
     return None
 
 
-def probe_single_ip(ip: str, timeout: float = 0.65) -> Optional[DiscoveredDevice]:
-    """Query a single IP via UDP 161 SNMP first, with fallback to TCP 9100 + HTTP WCD probe."""
+def probe_single_ip(ip: str, timeout: float = 0.28) -> Optional[DiscoveredDevice]:
+    """Query a single IP via UDP 161 SNMP first, with automatic fallback to TCP 9100 + HTTP WCD probe."""
     oids = [
         OID_HR_DEVICE_DESCR,
         OID_PRT_GENERAL_PRINTER_NAME,
@@ -313,16 +328,16 @@ def probe_single_ip(ip: str, timeout: float = 0.65) -> Optional[DiscoveredDevice
             or snmp_data.get(OID_PRT_GENERAL_PRINTER_NAME)
             or snmp_data.get(OID_SYS_DESCR)
             or ""
-        )
-        sys_descr = snmp_data.get(OID_SYS_DESCR, raw_model)
-        hostname = snmp_data.get(OID_SYS_NAME, "")
-        serial = snmp_data.get(OID_PRT_GENERAL_SERIAL, "")
+        ).replace("\ufeff", "")
+        sys_descr = snmp_data.get(OID_SYS_DESCR, raw_model).replace("\ufeff", "")
+        hostname = snmp_data.get(OID_SYS_NAME, "").replace("\ufeff", "")
+        serial = snmp_data.get(OID_PRT_GENERAL_SERIAL, "").replace("\ufeff", "")
         combined = f"{raw_model} {sys_descr} {hostname}"
 
         # Filter to printers / MFPs
         if any(
             k in combined.upper()
-            for k in ("SINDOH", "D410", "D420", "D400", "22C-6E", "KONICA", "MINOLTA", "PRINTER", "MFP", "SERIES", "PCL", "LEXMARK")
+            for k in ("SINDOH", "D3", "D4", "D7", "22C-", "28C-", "KONICA", "MINOLTA", "PRINTER", "MFP", "SERIES", "PCL", "LEXMARK")
         ) or OID_HR_DEVICE_DESCR in snmp_data or OID_PRT_GENERAL_PRINTER_NAME in snmp_data:
             model_name, is_target = _normalize_model_name(f"{raw_model} {sys_descr}")
             if not is_target and raw_model:
@@ -337,6 +352,15 @@ def probe_single_ip(ip: str, timeout: float = 0.65) -> Optional[DiscoveredDevice
                 is_target_series=is_target,
                 supports_scan=True,
             )
+
+    # Fallback when SNMP UDP 161 is disabled or dropped (e.g. D450 with SNMP off): check TCP 9100 -> HTTP WCD
+    try:
+        with socket.create_connection((ip, 9100), timeout=0.18):
+            wcd_dev = probe_http_wcd(ip, timeout=0.8)
+            if wcd_dev:
+                return wcd_dev
+    except Exception:
+        pass
 
     return None
 

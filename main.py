@@ -799,10 +799,10 @@ class D410ConnectApp(ctk.CTk):
         self._render_device_list()
 
     def _sync_default_printer_name(self, dev: DiscoveredDevice) -> None:
-        if "D410" in dev.model.upper() or "D420" in dev.model.upper():
+        if dev.is_target_series or "SINDOH" in dev.model.upper():
             self.printer_name_var.set(dev.model)
         else:
-            self.printer_name_var.set(f"SINDOH D410/D420 ({dev.ip})")
+            self.printer_name_var.set(f"{dev.model} ({dev.ip})")
 
     def _render_device_list(self) -> None:
         if not hasattr(self, "device_list_frame") or not self.device_list_frame.winfo_exists():

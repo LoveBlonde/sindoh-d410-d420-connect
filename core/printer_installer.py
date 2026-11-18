@@ -384,10 +384,18 @@ Write-Output "SUCCESS_DRIVER=$chosenDriver"
             shutil.rmtree(extracted_dir, ignore_errors=True)
 
 
-def _find_installed_macos_ppd() -> Optional[Path]:
+def _find_installed_macos_ppd(printer_name: str = "") -> Optional[Path]:
     """Check if a Sindoh / Konica Minolta PPD is already installed in `/Library/Printers/PPDs/Contents/Resources`."""
     ppd_root = Path("/Library/Printers/PPDs/Contents/Resources")
     if ppd_root.exists():
+        # 1. Match specific model code in printer_name first (e.g. D450 -> *D450*, D410 -> *D410*)
+        m = re.search(r"(D3[0-9]{2}|D4[0-9]{2}|D7[0-9]{2}|CM[0-9]{4})", printer_name.upper())
+        if m:
+            code = m.group(1)
+            specific = sorted(ppd_root.glob(f"*{code}*"))
+            if specific:
+                return specific[0]
+
         for pat in ("*D410*", "*D420*", "*D450*", "*D470*", "*SINDOH*", "*224e*", "*284e*", "*KONICA*"):
             matches = sorted(ppd_root.glob(pat))
             if matches:
@@ -418,7 +426,7 @@ def install_printer_macos(
 
     try:
         pkg_file: Optional[Path] = None
-        ppd_file: Optional[Path] = _find_installed_macos_ppd() if not custom_driver_path else None
+        ppd_file: Optional[Path] = _find_installed_macos_ppd(printer_name) if not custom_driver_path else None
 
         if ppd_file:
             log(f"이미 설치된 신도리코 드라이버(PPD) 확인됨: {ppd_file.name}")
@@ -460,11 +468,11 @@ def install_printer_macos(
                 f'with administrator privileges'
             )
             subprocess.run(["osascript", "-e", osa_cmd], capture_output=True, text=True)
-            ppd_file = _find_installed_macos_ppd()
+            ppd_file = _find_installed_macos_ppd(printer_name)
 
         # Discover installed Sindoh / Konica Minolta PPD in /Library/Printers/PPDs/Contents/Resources/
         if not ppd_file:
-            ppd_file = _find_installed_macos_ppd()
+            ppd_file = _find_installed_macos_ppd(printer_name)
 
         # Build lpadmin command
         subprocess.run(["lpadmin", "-x", queue_name], capture_output=True)
