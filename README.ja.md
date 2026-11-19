@@ -2,6 +2,8 @@
 
 **🌐 Language: [한국어](README.md) | [English](README.en.md) | [中文](README.zh.md) | [日本語](README.ja.md)**
 
+> **対応機種**: SINDOH **D410 · D410s · D420**(同じエンジンの D400 / D450 / CM シリーズなども利用可能)— D410 ドライバーインストール、D410s スキャン設定、D420 スキャン to PC
+
 ネットワーク上の **SINDOH(シンドー)D410 / D410s / D420 シリーズ** 複合機を自動検出し、**プリンタードライバー(TCP/IP ポート)** と **スキャン to PC(複合機パネルのワンタッチ宛先ボタン + PC 側の受信フォルダー)** をワンクリックでセットアップする、オープンソースのクロスプラットフォーム ウィザードです。公式の `sindoh Connect` ワンクリックインストーラーが対応していない機種向けに作られています。
 
 > **著作権について**: 本リポジトリにはメーカー独自のバイナリ(DLL、ドライバーファイルなど)を**一切含みません**。標準的な SNMP / HTTP / WebDAV / CUPS / PrintManagement の仕組みのみを用い、純粋な Python でゼロから実装しています。
@@ -29,8 +31,9 @@
 ## 🚀 使い方
 
 ### Windows(最も簡単 — `.exe` 1 ファイル)
-1. GitHub の **Actions** タブ → 最新の成功した実行 → **`D410-D420-Connect-Windows`** をダウンロードします。
-2. 解凍して、1 つだけ入っている **`D410-D420-Connect.exe`** をダブルクリック。Python は不要です。インストール後は `.exe` を削除しても構いません(スキャンエージェントは `%LOCALAPPDATA%\SindohD410Connect` にコピーされます)。
+1. 最新リリースから **`D410-D420-Connect.exe`** を直接ダウンロードします(GitHub ログイン不要):
+   - 👉 **[最新 Windows インストーラーをダウンロード (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
+2. **`D410-D420-Connect.exe`** をダブルクリックします(Windows SmartScreen の青い画面が出た場合は **詳細情報 → 実行** をクリック)。Python は不要で、インストール後は `.exe` を削除しても構いません(スキャンエージェントは `%LOCALAPPDATA%\SindohD410Connect` にコピーされます)。
 
 ソースから実行する場合:
 ```powershell

@@ -2,6 +2,8 @@
 
 **🌐 Language: [한국어](README.md) | [English](README.en.md) | [中文](README.zh.md) | [日本語](README.ja.md)**
 
+> **Supported models**: SINDOH **D410 · D410s · D420** (also works with same-engine models such as D400 / D450 / CM series) — D410 driver install, D410s scan setup, D420 scan-to-PC
+
 An open-source, cross-platform wizard that automatically finds **SINDOH D410 / D410s / D420 series** MFPs on your network and installs the **printer driver (TCP/IP port)** and **scan-to-PC (one-touch address-book button on the MFP panel + local receive folder)** with one click. These models are not supported by the official `sindoh Connect` one-click installer.
 
 > **Copyright notice**: This repository does **not** contain any proprietary vendor binaries (DLLs, driver files, etc.). Everything is written from scratch in pure Python using standard SNMP / HTTP / WebDAV / CUPS / PrintManagement mechanisms.
@@ -29,8 +31,9 @@ An open-source, cross-platform wizard that automatically finds **SINDOH D410 / D
 ## 🚀 How to run
 
 ### Windows (easiest — single `.exe`)
-1. On GitHub, open the **Actions** tab → latest successful run → download the **`D410-D420-Connect-Windows`** artifact.
-2. Unzip it and double-click the single file **`D410-D420-Connect.exe`**. No Python needed. You can delete the `.exe` after installation; the scan agent is copied to `%LOCALAPPDATA%\SindohD410Connect`.
+1. Download **`D410-D420-Connect.exe`** directly from the latest release (no GitHub login required):
+   - 👉 **[Download latest Windows installer (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
+2. Double-click **`D410-D420-Connect.exe`**. (If Windows SmartScreen appears, click **More info → Run anyway**.) No Python needed. You can delete the `.exe` after installation; the scan agent is copied to `%LOCALAPPDATA%\SindohD410Connect`.
 
 Or run from source:
 ```powershell

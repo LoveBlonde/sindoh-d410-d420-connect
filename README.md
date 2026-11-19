@@ -2,6 +2,8 @@
 
 **🌐 Language: [한국어](README.md) | [English](README.en.md) | [中文](README.zh.md) | [日本語](README.ja.md)**
 
+> **지원 기종**: 신도리코 **D410 · D410s · D420** (D400 · D450 · CM 시리즈 등 동일 엔진 기종 호환) — D410 드라이버 설치, D410s 스캔 설정, D420 스캔 to PC
+
 신도리코 최신 원클릭 통합 설치 프로그램(`sindoh Connect`)의 지원 목록에서 제외된 **SINDOH D410 / D410s / D420 시리즈** 복합기를 네트워크에서 자동으로 탐색하고, **프린터 드라이버(TCP/IP 포트)** 및 **스캔(복합기 패널 주소록 원터치 버튼 + 로컬 수신 폴더)**을 원클릭으로 설치해 주는 오픈소스 크로스 플랫폼 위저드 프로그램입니다.
 
 > **저작권 안내**: 본 저장소는 제조사의 독점 바이너리(DLL, 드라이버 파일 등)를 포함하지 않으며, 100% 자체 작성된 순수 Python 표준 SNMP/HTTP/WebDAV/CUPS/PrintManagement 코드로 동작하므로 퍼블릭(Public) 오픈소스로 안전하게 사용할 수 있습니다.
@@ -29,8 +31,10 @@
 ## 🚀 실행 방법 (현장 프린터 테스트용)
 
 ### 1. Windows에서 실행하기 (가장 쉬운 방법 — `.exe` 파일 1개)
-1. GitHub 저장소의 **Actions** 탭 → 최신 성공 빌드 → **`D410-D420-Connect-Windows`** 아티팩트를 다운로드합니다.
-2. 압축을 풀면 나오는 **`D410-D420-Connect.exe`** 파일 1개를 더블클릭합니다. 파이썬 설치가 필요 없고, 설치가 끝나면 이 `.exe`는 지워도 됩니다. (스캔 수신 에이전트는 `%LOCALAPPDATA%\SindohD410Connect`에 복사되어 계속 동작합니다.)
+1. 아래 최신 릴리즈 링크를 클릭해 **`D410-D420-Connect.exe`**를 다운로드합니다 (GitHub 로그인 불필요):
+   - 👉 **[Windows용 최신 설치 파일 다운로드 (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
+2. 다운로드한 **`D410-D420-Connect.exe`**를 더블클릭합니다. (파란색 **Windows의 PC 보호** 창이 뜨면 **`추가 정보` → `실행`**을 누르세요.)
+3. 파이썬 설치가 필요 없고, 설치가 끝나면 이 `.exe`는 지워도 됩니다. (스캔 수신 에이전트는 `%LOCALAPPDATA%\SindohD410Connect`에 복사되어 계속 동작합니다.)
 
 소스코드로 직접 실행하려면:
 ```powershell

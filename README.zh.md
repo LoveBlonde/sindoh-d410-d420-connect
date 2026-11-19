@@ -2,6 +2,8 @@
 
 **🌐 语言: [한국어](README.md) | [English](README.en.md) | [中文](README.zh.md) | [日本語](README.ja.md)**
 
+> **支持机型**: SINDOH **D410 · D410s · D420**(同引擎的 D400 / D450 / CM 系列等机型也可使用)— D410 驱动安装、D410s 扫描设置、D420 扫描到电脑
+
 这是一个开源的跨平台安装向导,可自动发现网络中的 **SINDOH(新道理科)D410 / D410s / D420 系列** 多功能一体机,并一键安装 **打印驱动(TCP/IP 端口)** 与 **扫描到电脑功能(在机器面板上添加一键地址簿按钮 + 本地接收文件夹)**。官方的 `sindoh Connect` 一键安装程序不支持这些机型。
 
 > **版权声明**: 本仓库**不包含**任何厂商的专有二进制文件(DLL、驱动文件等)。所有代码均为从零编写的纯 Python 实现,仅使用标准的 SNMP / HTTP / WebDAV / CUPS / PrintManagement 机制。
@@ -29,8 +31,9 @@
 ## 🚀 使用方法
 
 ### Windows(最简单 — 单个 `.exe`)
-1. 在 GitHub 打开 **Actions** 标签 → 最新的成功构建 → 下载 **`D410-D420-Connect-Windows`**。
-2. 解压后双击唯一的文件 **`D410-D420-Connect.exe`**,无需安装 Python。安装完成后可删除该 `.exe`,扫描代理已被复制到 `%LOCALAPPDATA%\SindohD410Connect`。
+1. 直接从最新 Release 下载 **`D410-D420-Connect.exe`**(无需登录 GitHub):
+   - 👉 **[下载最新 Windows 安装程序 (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
+2. 双击 **`D410-D420-Connect.exe`**(如果弹出 Windows SmartScreen 蓝色提示框,点击 **更多信息 → 仍要运行**)。无需安装 Python,安装完成后可删除该 `.exe`,扫描代理已被复制到 `%LOCALAPPDATA%\SindohD410Connect`。
 
 或从源码运行:
 ```powershell
