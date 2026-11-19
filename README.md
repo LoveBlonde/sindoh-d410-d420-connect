@@ -1,5 +1,7 @@
 # D410 / D420 Connect (Windows & macOS 원클릭 통합 설치 프로그램)
 
+**🌐 Language: [한국어](README.md) | [English](README.en.md) | [中文](README.zh.md) | [日本語](README.ja.md)**
+
 신도리코 최신 원클릭 통합 설치 프로그램(`sindoh Connect`)의 지원 목록에서 제외된 **SINDOH D410 / D410s / D420 시리즈** 복합기를 네트워크에서 자동으로 탐색하고, **프린터 드라이버(TCP/IP 포트)** 및 **스캔(복합기 패널 주소록 원터치 버튼 + 로컬 수신 폴더)**을 원클릭으로 설치해 주는 오픈소스 크로스 플랫폼 위저드 프로그램입니다.
 
 > **저작권 안내**: 본 저장소는 제조사의 독점 바이너리(DLL, 드라이버 파일 등)를 포함하지 않으며, 100% 자체 작성된 순수 Python 표준 SNMP/HTTP/WebDAV/CUPS/PrintManagement 코드로 동작하므로 퍼블릭(Public) 오픈소스로 안전하게 사용할 수 있습니다.
@@ -26,14 +28,16 @@
 
 ## 🚀 실행 방법 (현장 프린터 테스트용)
 
-### 1. Windows에서 실행하기
-1. 저장소를 클론하거나 ZIP으로 다운로드합니다:
-   ```powershell
-   git clone https://github.com/LoveBlonde/sindoh-d410-d420-connect.git
-   cd sindoh-d410-d420-connect
-   ```
-2. **`run_windows.bat`** 파일을 더블클릭합니다. (자동으로 관리자 권한을 요청하고 GUI 창이 실행됩니다.)
-   - 또는 GitHub 저장소의 **Actions** 탭에서 빌드된 **`D410-D420-Connect-Windows`** 실행 파일(`D410-D420-Connect.exe`)을 받아 바로 실행할 수도 있습니다.
+### 1. Windows에서 실행하기 (가장 쉬운 방법 — `.exe` 파일 1개)
+1. GitHub 저장소의 **Actions** 탭 → 최신 성공 빌드 → **`D410-D420-Connect-Windows`** 아티팩트를 다운로드합니다.
+2. 압축을 풀면 나오는 **`D410-D420-Connect.exe`** 파일 1개를 더블클릭합니다. 파이썬 설치가 필요 없고, 설치가 끝나면 이 `.exe`는 지워도 됩니다. (스캔 수신 에이전트는 `%LOCALAPPDATA%\SindohD410Connect`에 복사되어 계속 동작합니다.)
+
+소스코드로 직접 실행하려면:
+```powershell
+git clone https://github.com/LoveBlonde/sindoh-d410-d420-connect.git
+cd sindoh-d410-d420-connect
+run_windows.bat
+```
 
 ### 2. macOS에서 실행하기
 1. 터미널에서 클론 후 **`run_macos.command`**를 실행하거나 아래 명령어를 입력합니다:
@@ -62,5 +66,5 @@ GitHub Actions(`.github/workflows/build.yml`)가 포함되어 있어 코드를 �
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconfirm --onedir --windowed --uac-admin --name "D410-D420-Connect" --collect-all customtkinter main.py
+pyinstaller --noconfirm --onefile --windowed --uac-admin --name "D410-D420-Connect" --collect-all customtkinter main.py
 ```
