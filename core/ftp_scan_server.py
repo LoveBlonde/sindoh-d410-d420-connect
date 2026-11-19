@@ -158,7 +158,14 @@ class _WebDavRequestHandler(http.server.BaseHTTPRequestHandler):
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             clean_name = f"SCAN_{ts}.pdf"
         target = srv.root_dir / clean_name
+        # Only append a timestamp suffix if a non-empty (>0 bytes) file with the same name already exists.
+        # If a 0-byte placeholder exists from a two-phase WebDAV PUT, overwrite it directly.
         if target.exists():
+            try:
+                if target.stat().st_size == 0:
+                    return target
+            except Exception:
+                pass
             stem = target.stem
             suffix = target.suffix
             ts = datetime.datetime.now().strftime("%H%M%S_%f")[:9]
@@ -286,9 +293,19 @@ class _WebDavRequestHandler(http.server.BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         self._handle_expect_100()
         srv: _ThreadingWebDavHTTPServer = self.server  # type: ignore[assignment]
-        target = self._safe_target_path(self.path)
         try:
             data = self._read_request_body()
+            # Konica Minolta / Sindoh MFPs perform a two-phase WebDAV upload:
+            #   Phase 1: PUT /FILENAME.pdf with Content-Length: 0 (0-byte reservation check) -> LOCK ->
+            #   Phase 2: PUT /FILENAME.pdf with the actual scanned PDF/JPEG bytes.
+            # Ignore 0-byte reservation PUTs on disk so we never create a 0KB file or force a `_timestamp` rename!
+            if not data:
+                self.send_response(201, "Created")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            target = self._safe_target_path(self.path)
             target.write_bytes(data)
             self._log(f"WebDAV 스캔 파일 수신 완료: {target.name} ({len(data):,} bytes)")
             if srv.on_file_received:
@@ -504,6 +521,11 @@ class _FTPSession(threading.Thread):
             clean_name = f"SCAN_{ts}.pdf"
         target = self.root_dir / clean_name
         if target.exists():
+            try:
+                if target.stat().st_size == 0:
+                    return target
+            except Exception:
+                pass
             stem = target.stem
             suffix = target.suffix
             ts = datetime.datetime.now().strftime("%H%M%S_%f")[:9]
@@ -668,6 +690,13 @@ class _FTPSession(threading.Thread):
                         break
                     f.write(chunk)
                     total_bytes += len(chunk)
+            if total_bytes == 0:
+                try:
+                    target.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                self._send("226 Transfer complete.")
+                return
             self._send("226 Transfer complete.")
             self._log(f"FTP 스캔 파일 수신 완료: {target.name} ({total_bytes:,} bytes)")
             if self.on_file_received:
