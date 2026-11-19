@@ -14,6 +14,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -35,12 +36,40 @@ class InstallStepResult:
 
 
 def get_project_drivers_dir() -> Path:
-    """Return the local `drivers/` directory next to the application."""
-    base = Path(__file__).resolve().parent.parent / "drivers"
+    """
+    Return the persistent `drivers/` directory.
+    - When frozen (PyInstaller --onefile / --onedir): use `%LOCALAPPDATA%/SindohD410Connect/drivers`
+      on Windows (or `~/Library/Application Support/SindohD410Connect/drivers` on macOS) so downloaded
+      drivers are never written into ephemeral `_MEI` temp folders.
+    - When running from source: use `<project>/drivers`.
+    """
+    if getattr(sys, "frozen", False):
+        sys_name = platform.system().lower()
+        if sys_name == "windows":
+            base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "SindohD410Connect" / "drivers"
+        elif sys_name == "darwin":
+            base = Path.home() / "Library" / "Application Support" / "SindohD410Connect" / "drivers"
+        else:
+            base = Path.home() / ".local" / "share" / "SindohD410Connect" / "drivers"
+    else:
+        base = Path(__file__).resolve().parent.parent / "drivers"
     base.mkdir(parents=True, exist_ok=True)
     (base / "windows").mkdir(exist_ok=True)
     (base / "macos").mkdir(exist_ok=True)
     return base
+
+
+def _get_candidate_driver_roots() -> List[Path]:
+    """Return all driver search roots: next to the executable (if frozen) first, then persistent AppData/project drivers."""
+    roots: List[Path] = []
+    if getattr(sys, "frozen", False):
+        exe_drivers = Path(sys.executable).resolve().parent / "drivers"
+        if exe_drivers.is_dir():
+            roots.append(exe_drivers)
+    persistent = get_project_drivers_dir()
+    if persistent not in roots:
+        roots.append(persistent)
+    return roots
 
 
 def parse_inf_driver_names(inf_path: Path) -> List[str]:
@@ -102,17 +131,19 @@ def find_local_driver_source(custom_path: Optional[str] = None) -> Optional[Path
                 return None
             return p
 
-    drv_root = get_project_drivers_dir()
     sys_name = platform.system().lower()
 
     if sys_name == "windows":
-        win_dir = drv_root / "windows"
-        infs = _filter_real_files(list(win_dir.rglob("*.inf")))
-        if infs:
-            return infs[0].parent
-        zips = _filter_real_files(list(win_dir.rglob("*.zip")))
-        if zips:
-            return zips[0]
+        for drv_root in _get_candidate_driver_roots():
+            win_dir = drv_root / "windows"
+            if not win_dir.is_dir():
+                continue
+            infs = _filter_real_files(list(win_dir.rglob("*.inf")))
+            if infs:
+                return infs[0].parent
+            zips = _filter_real_files(list(win_dir.rglob("*.zip")))
+            if zips:
+                return zips[0]
         # Check SindohConnect local cache on Windows
         local_appdata = os.environ.get("LOCALAPPDATA", "")
         if local_appdata:
@@ -120,11 +151,14 @@ def find_local_driver_source(custom_path: Optional[str] = None) -> Optional[Path
             if km_cache.exists() and zipfile.is_zipfile(km_cache):
                 return km_cache
     elif sys_name == "darwin":
-        mac_dir = drv_root / "macos"
-        for ext in ("*.pkg", "*.gz", "*.ppd", "*.zip", "*.dmg"):
-            found = _filter_real_files(list(mac_dir.rglob(ext)))
-            if found:
-                return found[0]
+        for drv_root in _get_candidate_driver_roots():
+            mac_dir = drv_root / "macos"
+            if not mac_dir.is_dir():
+                continue
+            for ext in ("*.pkg", "*.gz", "*.ppd", "*.zip", "*.dmg"):
+                found = _filter_real_files(list(mac_dir.rglob(ext)))
+                if found:
+                    return found[0]
         km_mac_cache = Path.home() / "Library" / "Application Support" / "SindohConnect" / "drivers-cache" / "KM.zip"
         if km_mac_cache.exists() and zipfile.is_zipfile(km_mac_cache):
             return km_mac_cache

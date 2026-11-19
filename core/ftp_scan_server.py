@@ -1081,19 +1081,29 @@ def _stage_daemon_to_appdata() -> tuple[str, Optional[Path], Path]:
     base.mkdir(parents=True, exist_ok=True)
 
     if is_frozen and sys_name == "windows":
-        src_app_dir = Path(sys.executable).resolve().parent
+        src_exe = Path(sys.executable).resolve()
+        src_app_dir = src_exe.parent
         dst_app_dir = base / "agent"
+        is_onedir_bundle = (src_app_dir / "_internal").is_dir()
+
         if src_app_dir != dst_app_dir:
             try:
                 if dst_app_dir.exists():
                     shutil.rmtree(dst_app_dir, ignore_errors=True)
-                shutil.copytree(src_app_dir, dst_app_dir, dirs_exist_ok=True)
-                staged_exe = dst_app_dir / Path(sys.executable).name
+                dst_app_dir.mkdir(parents=True, exist_ok=True)
+                if is_onedir_bundle:
+                    # --onedir bundle: copy exe + _internal only (never copy arbitrary user folders!)
+                    shutil.copy2(src_exe, dst_app_dir / src_exe.name)
+                    shutil.copytree(src_app_dir / "_internal", dst_app_dir / "_internal", dirs_exist_ok=True)
+                else:
+                    # --onefile single exe: copy ONLY the single .exe file itself (never copy Downloads/Desktop!)
+                    shutil.copy2(src_exe, dst_app_dir / src_exe.name)
+                staged_exe = dst_app_dir / src_exe.name
                 if staged_exe.exists():
                     return str(staged_exe), None, dst_app_dir
             except Exception:
                 pass
-        return sys.executable, None, base
+        return str(src_exe), None, base
 
     # Script mode: copy ftp_scan_server.py into AppData so it never locks the repo/download directory
     src_script = Path(__file__).resolve()

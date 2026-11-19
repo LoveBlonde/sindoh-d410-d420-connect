@@ -407,11 +407,16 @@ def install_twain_driver_if_present(
     if platform.system().lower() != "windows":
         return None
 
-    twain_dir = Path(__file__).resolve().parent.parent / "drivers" / "windows"
-    setup_exes = [
-        p for p in twain_dir.rglob("*.exe")
-        if any(k in p.name.lower() for k in ("twain", "setup", "scan"))
-    ]
+    from core.printer_installer import _get_candidate_driver_roots
+
+    setup_exes = []
+    for drv_root in _get_candidate_driver_roots():
+        twain_dir = drv_root / "windows"
+        if not twain_dir.is_dir():
+            continue
+        for p in twain_dir.rglob("*.exe"):
+            if any(k in p.name.lower() for k in ("twain", "setup", "scan")):
+                setup_exes.append(p)
     if not setup_exes:
         return None
 
