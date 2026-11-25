@@ -30,10 +30,10 @@ An open-source, cross-platform wizard that automatically finds **SINDOH D410 / D
 
 ## 🚀 How to run
 
-### Windows (easiest — single `.exe`)
-1. Download **`D410-D420-Connect.exe`** directly from the latest release (no GitHub login required):
-   - 👉 **[Download latest Windows installer (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
-2. Double-click **`D410-D420-Connect.exe`**. (If Windows SmartScreen appears, click **More info → Run anyway**.) No Python needed. You can delete the `.exe` after installation; the scan agent is copied to `%LOCALAPPDATA%\SindohD410Connect`.
+### Windows (easiest — `.exe` + `_internal` ZIP)
+1. Download **`D410-D420-Connect-Windows.zip`** directly from the latest release (no GitHub login required):
+   - 👉 **[Download latest Windows installer (`D410-D420-Connect-Windows.zip`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect-Windows.zip)**
+2. Extract the ZIP and double-click **`D410-D420-Connect.exe`** (keep `_internal` in the same folder; if Windows SmartScreen appears, click **More info → Run anyway**). No Python needed. You can delete the extracted folder after installation; the scan agent is copied to `%LOCALAPPDATA%\SindohD410Connect`.
 
 Or run from source:
 ```powershell

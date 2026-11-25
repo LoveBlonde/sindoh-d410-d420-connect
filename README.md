@@ -30,11 +30,11 @@
 
 ## 🚀 실행 방법 (현장 프린터 테스트용)
 
-### 1. Windows에서 실행하기 (가장 쉬운 방법 — `.exe` 파일 1개)
-1. 아래 최신 릴리즈 링크를 클릭해 **`D410-D420-Connect.exe`**를 다운로드합니다 (GitHub 로그인 불필요):
-   - 👉 **[Windows용 최신 설치 파일 다운로드 (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
-2. 다운로드한 **`D410-D420-Connect.exe`**를 더블클릭합니다. (파란색 **Windows의 PC 보호** 창이 뜨면 **`추가 정보` → `실행`**을 누르세요.)
-3. 파이썬 설치가 필요 없고, 설치가 끝나면 이 `.exe`는 지워도 됩니다. (스캔 수신 에이전트는 `%LOCALAPPDATA%\SindohD410Connect`에 복사되어 계속 동작합니다.)
+### 1. Windows에서 실행하기 (가장 쉬운 방법 — `.exe` + `_internal` ZIP)
+1. 아래 최신 릴리즈 링크를 클릭해 **`D410-D420-Connect-Windows.zip`**을 다운로드합니다 (GitHub 로그인 불필요):
+   - 👉 **[Windows용 최신 설치 파일 다운로드 (`D410-D420-Connect-Windows.zip`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect-Windows.zip)**
+2. 압축을 푼 폴더 안의 **`D410-D420-Connect.exe`**를 더블클릭합니다. (`_internal` 폴더가 같은 폴더에 함께 있어야 합니다. 파란색 **Windows의 PC 보호** 창이 뜨면 **`추가 정보` → `실행`**을 누르세요.)
+3. 파이썬 설치가 필요 없고, 설치가 끝나면 압축 해제 폴더는 지워도 됩니다. (스캔 수신 에이전트는 `%LOCALAPPDATA%\SindohD410Connect`에 복사되어 계속 동작합니다.)
 
 소스코드로 직접 실행하려면:
 ```powershell

@@ -3,7 +3,11 @@ name: Build Windows & macOS Executables
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -17,13 +21,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
-      - name: Build Windows single-file .exe
+      - name: Build Windows onedir bundle (exe + _internal)
         run: |
-          pyinstaller --noconfirm --onefile --windowed --uac-admin --name "D410-D420-Connect" --collect-all customtkinter main.py
+          pyinstaller --noconfirm --onedir --windowed --uac-admin --name "D410-D420-Connect" --collect-all customtkinter main.py
+      - name: Package Windows ZIP (exe + _internal)
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/D410-D420-Connect/*" -DestinationPath "dist/D410-D420-Connect-Windows.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
           name: D410-D420-Connect-Windows
-          path: dist/D410-D420-Connect.exe
+          path: dist/D410-D420-Connect-Windows.zip
 
   build-macos:
     runs-on: macos-latest
@@ -43,3 +51,33 @@ jobs:
         with:
           name: D410-D420-Connect-macOS
           path: dist/D410-D420-Connect.app
+
+  release:
+    needs: [ build-windows ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows ZIP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: D410-D420-Connect-Windows
+          path: release-assets
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/D410-D420-Connect-Windows.zip --clobber
+          else
+            gh release create "$TAG" release-assets/D410-D420-Connect-Windows.zip \
+              --title "D410/D420 Connect $TAG (Windows Bundle: exe + _internal)" \
+              --notes "## SINDOH D410 / D410s / D420 원클릭 통합 설치 프로그램 ($TAG)
+
+### 📥 Windows용 설치 방법 (\`exe\` + \`_internal\` 폴더 포함)
+1. 아래 **\`D410-D420-Connect-Windows.zip\`** 파일을 다운로드해 압축을 풉니다.
+2. 압축을 푼 폴더 안의 **\`D410-D420-Connect.exe\`**를 더블클릭합니다. (반드시 같은 폴더에 \`_internal\` 폴더가 함께 있어야 합니다.)
+3. 파란색 **Windows의 PC 보호(SmartScreen)** 창이 뜨면 **\`추가 정보\` → \`실행\`**을 눌러주세요.
+4. 설치가 완료되면 다운로드한 ZIP과 압축 해제 폴더는 삭제해도 됩니다. (스캔 수신 에이전트는 \`%LOCALAPPDATA%\SindohD410Connect\`에 자동 등록되어 재부팅 후에도 동작합니다.)" \
+              --latest
+          fi

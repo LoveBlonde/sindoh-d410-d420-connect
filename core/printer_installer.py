@@ -186,7 +186,7 @@ def ensure_driver_package(
     try:
         if log_cb:
             log_cb("신도리코 통합 드라이버 서버에서 KM 호환 드라이버를 다운로드하는 중...")
-        with urllib.request.urlopen(api_url, timeout=8.0) as resp:
+        with urllib.request.urlopen(api_url, timeout=30.0) as resp:
             raw_bytes = resp.read()
 
         # The Sindoh API endpoint returns a JSON metadata payload containing `content.downloadUrl`
@@ -199,7 +199,10 @@ def ensure_driver_package(
             pass
 
         if download_url != api_url:
-            urllib.request.urlretrieve(download_url, str(target_zip))
+            if download_url.startswith("/"):
+                download_url = "https://sindohconnect.sindoh.com" + download_url
+            with urllib.request.urlopen(download_url, timeout=60.0) as dresp:
+                target_zip.write_bytes(dresp.read())
         else:
             target_zip.write_bytes(raw_bytes)
 
@@ -299,15 +302,16 @@ def install_printer_windows(
                 if n not in candidate_driver_names:
                     candidate_driver_names.append(n)
 
-        # Prioritize D410 / D420 / D470 / Universal names
+        # Prioritize color-capable D410 / D420 / D470 / Universal / PS Class Driver (avoid monochrome-only PCL6 Class Driver)
         for fallback_name in (
             "SINDOH D410/D420 Series PCL",
             "SINDOH D410/D420 PCL",
             "SINDOH D400 Series PCL",
             "SINDOH D470/D740/CM Series PCL",
             "KONICA MINOLTA Universal PCL",
-            "Microsoft PCL6 Class Driver",
             "Microsoft PS Class Driver",
+            "Microsoft IPP Class Driver",
+            "Microsoft PCL6 Class Driver",
         ):
             if fallback_name not in candidate_driver_names:
                 candidate_driver_names.append(fallback_name)
@@ -355,16 +359,23 @@ foreach ($n in $candidates) {{
 }}
 
 if (-not $chosenDriver) {{
-    $existing = Get-PrinterDriver | Where-Object {{ $_.Name -match 'SINDOH|KONICA|PCL6 Class|PS Class' }} | Select-Object -First 1
+    $existing = Get-PrinterDriver | Where-Object {{ $_.Name -match 'SINDOH|KONICA|PS Class|IPP Class' }} | Select-Object -First 1
     if ($existing) {{
         $chosenDriver = $existing.Name
     }}
 }}
 
 if (-not $chosenDriver) {{
-    & rundll32.exe printui.dll,PrintUIEntry /ia /m "Microsoft PCL6 Class Driver" /h x64 /f "$env:windir\\inf\\ntprint.inf" | Out-Null
-    Add-PrinterDriver -Name "Microsoft PCL6 Class Driver" -ErrorAction SilentlyContinue | Out-Null
-    $chosenDriver = "Microsoft PCL6 Class Driver"
+    & rundll32.exe printui.dll,PrintUIEntry /ia /m "Microsoft PS Class Driver" /h x64 /f "$env:windir\\inf\\ntprint.inf" | Out-Null
+    Add-PrinterDriver -Name "Microsoft PS Class Driver" -ErrorAction SilentlyContinue | Out-Null
+    $dPs = Get-PrinterDriver -Name "Microsoft PS Class Driver" -ErrorAction SilentlyContinue
+    if ($dPs) {{
+        $chosenDriver = $dPs.Name
+    }} else {{
+        & rundll32.exe printui.dll,PrintUIEntry /ia /m "Microsoft PCL6 Class Driver" /h x64 /f "$env:windir\\inf\\ntprint.inf" | Out-Null
+        Add-PrinterDriver -Name "Microsoft PCL6 Class Driver" -ErrorAction SilentlyContinue | Out-Null
+        $chosenDriver = "Microsoft PCL6 Class Driver"
+    }}
 }}
 
 if (-not (Get-PrinterPort -Name $portName -ErrorAction SilentlyContinue)) {{
@@ -377,7 +388,10 @@ if (Get-Printer -Name $printerName -ErrorAction SilentlyContinue) {{
 
 Add-Printer -Name $printerName -DriverName $chosenDriver -PortName $portName -ErrorAction Stop
 try {{
-    Set-PrintConfiguration -PrinterName $printerName -DuplexingMode OneSided -ErrorAction SilentlyContinue
+    Set-PrintConfiguration -PrinterName $printerName -Color $true -DuplexingMode OneSided -ErrorAction SilentlyContinue
+}} catch {{}}
+try {{
+    Set-PrintConfiguration -PrinterName $printerName -Color $true -ErrorAction SilentlyContinue
 }} catch {{}}
 
 if (${'true' if set_default else 'false'}) {{

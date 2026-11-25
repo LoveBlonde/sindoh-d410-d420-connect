@@ -30,10 +30,10 @@
 
 ## 🚀 使用方法
 
-### Windows(最简单 — 单个 `.exe`)
-1. 直接从最新 Release 下载 **`D410-D420-Connect.exe`**(无需登录 GitHub):
-   - 👉 **[下载最新 Windows 安装程序 (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
-2. 双击 **`D410-D420-Connect.exe`**(如果弹出 Windows SmartScreen 蓝色提示框,点击 **更多信息 → 仍要运行**)。无需安装 Python,安装完成后可删除该 `.exe`,扫描代理已被复制到 `%LOCALAPPDATA%\SindohD410Connect`。
+### Windows(最简单 — `.exe` + `_internal` 压缩包)
+1. 直接从最新 Release 下载 **`D410-D420-Connect-Windows.zip`**(无需登录 GitHub):
+   - 👉 **[下载最新 Windows 安装程序 (`D410-D420-Connect-Windows.zip`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect-Windows.zip)**
+2. 解压后双击文件夹内的 **`D410-D420-Connect.exe`**(请确保 `_internal` 文件夹在同一目录;如果弹出 Windows SmartScreen 蓝色提示框,点击 **更多信息 → 仍要运行**)。无需安装 Python,安装完成后可删除解压文件夹,扫描代理已被复制到 `%LOCALAPPDATA%\SindohD410Connect`。
 
 或从源码运行:
 ```powershell

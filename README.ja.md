@@ -30,10 +30,10 @@
 
 ## 🚀 使い方
 
-### Windows(最も簡単 — `.exe` 1 ファイル)
-1. 最新リリースから **`D410-D420-Connect.exe`** を直接ダウンロードします(GitHub ログイン不要):
-   - 👉 **[最新 Windows インストーラーをダウンロード (`D410-D420-Connect.exe`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect.exe)**
-2. **`D410-D420-Connect.exe`** をダブルクリックします(Windows SmartScreen の青い画面が出た場合は **詳細情報 → 実行** をクリック)。Python は不要で、インストール後は `.exe` を削除しても構いません(スキャンエージェントは `%LOCALAPPDATA%\SindohD410Connect` にコピーされます)。
+### Windows(最も簡単 — `.exe` + `_internal` ZIP)
+1. 最新リリースから **`D410-D420-Connect-Windows.zip`** を直接ダウンロードします(GitHub ログイン不要):
+   - 👉 **[最新 Windows インストーラーをダウンロード (`D410-D420-Connect-Windows.zip`)](https://github.com/LoveBlonde/sindoh-d410-d420-connect/releases/latest/download/D410-D420-Connect-Windows.zip)**
+2. 解凍してフォルダー内の **`D410-D420-Connect.exe`** をダブルクリックします(`_internal` フォルダーを同じ場所に置いてください。Windows SmartScreen の青い画面が出た場合は **詳細情報 → 実行** をクリック)。Python は不要で、インストール後は解凍フォルダーを削除しても構いません(スキャンエージェントは `%LOCALAPPDATA%\SindohD410Connect` にコピーされます)。
 
 ソースから実行する場合:
 ```powershell
