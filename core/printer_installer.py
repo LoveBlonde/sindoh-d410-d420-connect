@@ -405,7 +405,15 @@ try {{
 }} catch {{}}
 
 if (${'true' if set_default else 'false'}) {{
-    (New-Object -ComObject WScript.Network).SetDefaultPrinter($printerName)
+    try {{
+        Set-ItemProperty -Path 'HKCU:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Windows' -Name 'LegacyDefaultPrinterMode' -Value 1 -Type DWord -ErrorAction SilentlyContinue
+    }} catch {{}}
+    try {{
+        & rundll32.exe printui.dll,PrintUIEntry /y /n "$printerName" | Out-Null
+    }} catch {{}}
+    try {{
+        (New-Object -ComObject WScript.Network).SetDefaultPrinter($printerName)
+    }} catch {{}}
 }}
 
 Write-Output "SUCCESS_DRIVER=$chosenDriver"
