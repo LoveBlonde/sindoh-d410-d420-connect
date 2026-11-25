@@ -232,14 +232,21 @@ def _is_windows_admin() -> bool:
 
 
 def _find_installed_windows_driver() -> Optional[str]:
-    """Check if a Sindoh / Konica Minolta PCL driver is already installed in Windows."""
+    """
+    Check if a COLOR-capable Sindoh / Konica Minolta D-series or Universal PCL driver is already installed in Windows.
+    Strictly excludes monochrome-only series (N4xx/N5xx/N6xx/N7xx/N9xx, M4xx, MF Series) so a color D410/D420
+    printer is never accidentally bound to an existing monochrome Sindoh driver!
+    """
     if platform.system().lower() != "windows":
         return None
     try:
         ps_check = (
             "Get-PrinterDriver -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.Name -match 'SINDOH|KONICA MINOLTA' } | "
-            "Select-Object -First 1 -ExpandProperty Name"
+            "Where-Object { "
+            "  ($_.Name -match 'SINDOH|KONICA MINOLTA') -and "
+            "  ($_.Name -match 'D3[0-9]{2}|D4[0-9]{2}|D7[0-9]{2}|CM Series|Universal|C224|C284|C364') -and "
+            "  ($_.Name -notmatch 'N[456789][0-9]{2}|MF Series|M[456][0-9]{2}|Mono') "
+            "} | Select-Object -First 1 -ExpandProperty Name"
         )
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_check],
@@ -359,7 +366,10 @@ foreach ($n in $candidates) {{
 }}
 
 if (-not $chosenDriver) {{
-    $existing = Get-PrinterDriver | Where-Object {{ $_.Name -match 'SINDOH|KONICA|PS Class|IPP Class' }} | Select-Object -First 1
+    $existing = Get-PrinterDriver | Where-Object {{
+        (($_.Name -match 'SINDOH|KONICA') -and ($_.Name -match 'D3[0-9]{{2}}|D4[0-9]{{2}}|D7[0-9]{{2}}|CM Series|Universal') -and ($_.Name -notmatch 'N[456789][0-9]{{2}}|MF Series|Mono')) -or
+        ($_.Name -match 'PS Class|IPP Class')
+    }} | Select-Object -First 1
     if ($existing) {{
         $chosenDriver = $existing.Name
     }}
