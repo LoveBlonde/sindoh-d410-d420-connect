@@ -76,8 +76,8 @@ jobs:
           3. 파란색 **Windows의 PC 보호(SmartScreen)** 창이 뜨면 **`추가 정보` -> `실행`**을 눌러주세요.
           4. 설치가 완료되면 다운로드한 ZIP과 압축 해제 폴더는 삭제해도 됩니다. (스캔 수신 에이전트는 `%LOCALAPPDATA%\SindohD410Connect`에 자동 등록되어 재부팅 후에도 동작합니다.)
           EOF
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release-assets/D410-D420-Connect-Windows.zip --clobber
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/D410-D420-Connect-Windows.zip --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" release-assets/D410-D420-Connect-Windows.zip --title "D410/D420 Connect $TAG (Windows Bundle)" --notes-file release_notes.md --latest
+            gh release create "$TAG" release-assets/D410-D420-Connect-Windows.zip --repo "$GITHUB_REPOSITORY" --title "D410/D420 Connect $TAG (Windows Bundle)" --notes-file release_notes.md --latest
           fi
